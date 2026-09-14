@@ -426,6 +426,9 @@ native Basic-auth dialog.
 
 ### Wiring a browser app
 
+The step-by-step version, including the Angular and React bootstrap, CORS and ingress, and how to
+verify the switch end to end, is in [clients/browser/INSTALL.md](clients/browser/INSTALL.md).
+
 ```ts
 import * as Sentry from '@sentry/browser';
 import { createSentrifig, installGate } from 'sentrifig-browser';

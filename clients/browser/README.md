@@ -15,6 +15,10 @@ coupling is a structural type, so this package never has to track Sentry's major
 npm install sentrifig-browser
 ```
 
+**New to this?** [INSTALL.md](INSTALL.md) is the step-by-step guide: backend prerequisites,
+Angular and React bootstrap, making the endpoint reachable, and how to verify the switch actually
+works end to end.
+
 ## Use
 
 ```ts
