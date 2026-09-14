@@ -29,11 +29,36 @@ export interface SentrifigState {
   source: StateSource;
 }
 
+/** Request headers, as a plain object. */
+export type HeaderMap = Record<string, string>;
+
 export interface SentrifigOptions {
   /** Absolute or root-relative URL of the gem's state endpoint. */
   url: string;
-  /** Returns the app's auth token, if it has one yet. Called per request. */
+  /**
+   * Sugar for the common case: returns a token, which is sent as
+   * `Authorization: Bearer <token>`. Called per request, so it always sees the
+   * current value. Return null/undefined before login -- a 401 is expected and
+   * handled, not an error.
+   *
+   * If your app does not use bearer tokens, use `headers` instead. If it
+   * authenticates with cookies alone, use neither and leave `credentials` at
+   * its default.
+   */
   getToken?: () => string | null | undefined;
+  /**
+   * Full control over auth headers, for apps that do not use
+   * `Authorization: Bearer`. May be async, for a token that has to be read from
+   * an async store or refreshed first. Merged over anything `getToken`
+   * produced, so it wins on conflict.
+   *
+   *   headers: () => ({ 'X-Auth-Token': session.token })
+   *   headers: async () => ({ Authorization: `Bearer ${await auth.getAccessToken()}` })
+   */
+  headers?: () => HeaderMap | null | undefined | Promise<HeaderMap | null | undefined>;
+  /** Passed to fetch. Defaults to 'include', so cookie-authenticated apps work
+   *  with no token plumbing at all. Cross-origin, this requires the backend to
+   *  allow credentials and echo an explicit origin. */
   credentials?: RequestCredentials;
   /** What to assume before the first successful response. Default true. */
   defaultEnabled?: boolean;
@@ -158,9 +183,18 @@ export function createSentrifig(options: SentrifigOptions): Sentrifig {
 
   async function load(): Promise<void> {
     try {
-      const headers: Record<string, string> = { Accept: 'application/json' };
+      const headers: HeaderMap = { Accept: 'application/json' };
+
       const token = o.getToken?.();
       if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      // Only awaited when actually configured: `await undefined` still costs a
+      // microtask, which would delay the fetch past the caller's turn for every
+      // consumer that does not use this.
+      if (o.headers) {
+        const extra = await o.headers();
+        if (extra) Object.assign(headers, extra);
+      }
 
       const res = await doFetch!(o.url, {
         method: 'GET',

@@ -437,7 +437,7 @@ Sentry.init({ dsn: '…' });
 
 installGate(Sentry, createSentrifig({
   url: '/sentrifig/state',
-  getToken: () => localStorage.getItem('authToken'),
+  getToken: () => myAuth.accessToken,   // or omit entirely for cookie auth
 }));
 ```
 

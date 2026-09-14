@@ -16,9 +16,10 @@ first; it is the single most common reason a correct frontend install appears to
 
 - [ ] The Rails app runs **sentrifig >= 0.2.0** and has run the migration.
 - [ ] `Sentrifig::Engine` is mounted (typically at `/sentrifig`).
-- [ ] `config.client_authenticator` is set. **Unset means every request is refused with 401**, so the
-      browser never learns the state and (correctly) keeps sending.
-- [ ] The endpoint is reachable from the browser's origin — see §4.
+- [ ] `config.client_authenticator` is set, **and it understands the credential your frontend
+      actually sends** (§4). Unset means every request is refused with 401, so the browser never
+      learns the state and (correctly) keeps sending.
+- [ ] The endpoint is reachable from the browser's origin — see §5.
 
 Verify with curl before you touch any frontend code:
 
@@ -37,7 +38,7 @@ You want `200` and `content-type: application/json`:
 | `200 application/json` | Ready. |
 | `401` | Either the token is wrong, or `client_authenticator` is unset — check the app log for `[sentrifig] refusing request … client_authenticator is not set`. |
 | `404` | The engine is not mounted, or the path is not routed to this service. |
-| `200 text/html` | Your SPA's `index.html`. The path is being served by the frontend, not proxied to the backend — see §4. |
+| `200 text/html` | Your SPA's `index.html`. The path is being served by the frontend, not proxied to the backend — see §5. |
 
 ## 2. Install
 
@@ -71,7 +72,8 @@ export function startSentrifig(): void {
   try {
     instance = createSentrifig({
       url: `${environment.apiBaseUrl ?? ''}/sentrifig/state`,
-      getToken: () => localStorage.getItem('authToken')
+      // However YOUR app holds its credentials -- see "Authentication" below.
+      getToken: () => myAuthService.accessToken
     });
 
     installGate(Sentry, instance);
@@ -154,7 +156,8 @@ Sentry.init({dsn: import.meta.env.VITE_SENTRY_DSN});
 
 export const sentrifig = createSentrifig({
   url: `${import.meta.env.VITE_API_BASE_URL ?? ''}/sentrifig/state`,
-  getToken: () => localStorage.getItem('authToken')
+  // However YOUR app holds its credentials -- see "Authentication" below.
+  getToken: () => authStore.getState().accessToken
 });
 
 installGate(Sentry, sentrifig);
@@ -163,9 +166,7 @@ void sentrifig.refresh();
 createRoot(document.getElementById('root')!).render(<App />);
 ```
 
-Nothing is awaited, so first paint is not delayed. If your app holds its access token in memory
-rather than `localStorage` (a common pattern with an HttpOnly refresh cookie), point `getToken` at
-that store instead — it is called per request, so it always sees the current value.
+Nothing is awaited, so first paint is not delayed.
 
 ### Any other framework, or none
 
@@ -194,7 +195,74 @@ sentrifig()?.reset();
 
 The first is worth it on its own. The second matters most on shared workstations.
 
-## 4. Make the endpoint reachable
+## 4. Authentication — however your app does it
+
+The endpoint requires a logged-in application user. **The package makes no assumption about how
+your app authenticates**, and neither does the gem: the Rails side decides via
+`config.client_authenticator`, and the browser side just has to send whatever that check expects.
+
+Pick the row that matches your app.
+
+### Cookie-based sessions — nothing to configure
+
+If your API already authenticates with a session cookie, send nothing. `credentials` defaults to
+`'include'`, so the cookie rides along:
+
+```ts
+createSentrifig({url: '/sentrifig/state'});
+```
+
+### A bearer token
+
+`getToken` is sugar for `Authorization: Bearer <token>`. It is called **per request**, so it always
+sees the current value — never capture the token once at startup.
+
+```ts
+createSentrifig({
+  url: '/sentrifig/state',
+  getToken: () => myAuthService.accessToken        // in-memory
+  // getToken: () => localStorage.getItem('access_token')
+  // getToken: () => oidcUserManager.getUser()?.access_token
+});
+```
+
+Returning `null` before login is fine and expected: the request comes back 401, which the client
+treats as "not logged in yet" rather than an error — no log, no backoff escalation, and Sentry keeps
+sending.
+
+### Any other scheme — a custom header, or an async token
+
+`headers` gives you full control, and may be async if the token has to be read from an async store
+or refreshed first. It is merged over anything `getToken` produced, so it wins on conflict.
+
+```ts
+createSentrifig({
+  url: '/sentrifig/state',
+  headers: () => ({'X-Auth-Token': session.token})
+});
+
+createSentrifig({
+  url: '/sentrifig/state',
+  headers: async () => ({Authorization: `Bearer ${await auth.getAccessToken()}`})
+});
+```
+
+### Whatever you send, the backend must accept it
+
+This is the half people forget. The gem delegates the decision to the host app, so a Rails app that
+authenticates with, say, a session cookie needs its `client_authenticator` written accordingly:
+
+```ruby
+# config/initializers/sentrifig.rb
+config.client_authenticator = ->(request) { MyAuth.user_from(request).present? }
+```
+
+It receives an `ActionDispatch::Request`, so it can read headers, cookies or anything else on the
+request. If it only understands session cookies and your SPA only sends a bearer token, you get a
+permanent 401 — the switch will never take effect, though Sentry keeps working. Test the two ends
+together.
+
+## 5. Make the endpoint reachable
 
 **Same-origin (recommended).** If your SPA and the Rails app are served under one host, use a
 root-relative URL (`/sentrifig/state`) and you are done — *provided* your ingress or reverse proxy
@@ -211,7 +279,7 @@ keeping Sentry enabled (default), retrying with backoff
 credentials — an explicit origin, not `*`, and `Authorization` in the allowed headers. The gem ships
 no CORS handling of its own; configure it in the host app (for a Rails app, `rack-cors`).
 
-## 5. Verify
+## 6. Verify
 
 1. Load the app logged in. In DevTools → Network, filter for `state`: **exactly one** request,
    `200 application/json`.
@@ -234,7 +302,7 @@ if (!environment.production) {
 
 Then `__sentrifig.state()` returns `{enabled, environment, scope, ttl, source}`.
 
-## 6. What to expect in production
+## 7. What to expect in production
 
 - **Errors, transactions and session replays all stop together.** One processor covers them,
   because all three pass through Sentry's `prepareEvent`.
@@ -248,19 +316,20 @@ Then `__sentrifig.state()` returns `{enabled, environment, scope, ttl, source}`.
   arrives, so nothing is lost to a switch the client could not yet read. The cost is that an
   operator who disabled the switch still sees pre-login noise.
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 | Symptom | Cause |
 |---|---|
 | Nothing in Network at all | `refresh()` never called, and no event has been raised yet. The instance is lazy by design. |
-| `401` on every request | Not logged in yet (normal on a login screen — no log, longer backoff), or the backend's `client_authenticator` is unset or rejecting your token. |
+| `401` on every request | Not logged in yet (normal on a login screen — no log, longer backoff), or the backend's `client_authenticator` is unset. |
+| `401` even when clearly logged in | The two ends disagree about the credential: the frontend sends one thing, `client_authenticator` checks for another. Log what the lambda receives. See §4. |
 | `200 text/html` | The path is not routed to the backend. See §4. |
 | Console: `could not read state … keeping Sentry enabled` | The endpoint is unreachable. Sentry keeps working — this is the fail-open path, by design. |
 | Switch flipped but events still sending | Wait out `poll_interval`; the client only re-reads on its next event. Also check you flipped the **frontend** scope, not the backend one. |
 | A stale `disabled` after re-enabling | The `sessionStorage` seed, capped at 5 minutes. `reset()`, or open a new tab. |
 | Native browser login popup | Something is returning `WWW-Authenticate`. The gem's state endpoint deliberately does not; you are probably hitting the Basic-auth dashboard path instead of `/state`. |
 
-## 8. Uninstalling
+## 9. Uninstalling
 
 Remove the `installGate` call and the dependency. Nothing persists but a per-tab `sessionStorage`
 key that expires on its own, and the backend switch is unaffected.

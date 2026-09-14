@@ -125,6 +125,51 @@ describe('fetching and caching', () => {
     expect(fetchImpl.mock.calls[1][1].headers['Authorization']).toBe('Bearer abc123');
   });
 
+  it('supports a custom auth header for apps that do not use bearer tokens', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(ok());
+    const { instance } = make(fetchImpl, { headers: () => ({ 'X-Auth-Token': 'session-abc' }) });
+
+    await instance.refresh();
+
+    const sent = fetchImpl.mock.calls[0][1].headers;
+    expect(sent['X-Auth-Token']).toBe('session-abc');
+    expect(sent).not.toHaveProperty('Authorization');
+  });
+
+  it('awaits an async header source', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(ok());
+    const { instance } = make(fetchImpl, {
+      headers: async () => ({ Authorization: 'Bearer refreshed-token' }),
+    });
+
+    await instance.refresh();
+
+    expect(fetchImpl.mock.calls[0][1].headers['Authorization']).toBe('Bearer refreshed-token');
+  });
+
+  it('lets headers win over the getToken shorthand', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(ok());
+    const { instance } = make(fetchImpl, {
+      getToken: () => 'from-getToken',
+      headers: () => ({ Authorization: 'Bearer from-headers' }),
+    });
+
+    await instance.refresh();
+
+    expect(fetchImpl.mock.calls[0][1].headers['Authorization']).toBe('Bearer from-headers');
+  });
+
+  it('sends no auth header at all for a cookie-authenticated app', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(ok());
+    const { instance } = make(fetchImpl);
+
+    await instance.refresh();
+
+    const init = fetchImpl.mock.calls[0][1];
+    expect(init.headers).toEqual({ Accept: 'application/json' });
+    expect(init.credentials).toBe('include');
+  });
+
   it('treats 401 as "not logged in yet": no log, no state change, longer wait', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(json({ error: 'unauthorized' }, { status: 401 }));
     const { instance, advance } = make(fetchImpl, { unauthenticatedTtl: 60_000 });

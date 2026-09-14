@@ -29,7 +29,7 @@ Sentry.init({ dsn: '…' });
 
 const sentrifig = createSentrifig({
   url: '/sentrifig/state',
-  getToken: () => localStorage.getItem('authToken'),
+  getToken: () => myAuth.accessToken,   // or omit entirely for cookie auth
 });
 
 installGate(Sentry, sentrifig);
@@ -84,8 +84,9 @@ so the first event after re-enabling carries full context.
 | Option | Default | |
 |---|---|---|
 | `url` | — | Required. The gem's state endpoint, absolute or root-relative. |
-| `getToken` | — | Returns your app's auth token. Called per request; may return `null` before login. |
-| `credentials` | `'include'` | Passed to `fetch`. |
+| `getToken` | — | Sugar for `Authorization: Bearer <token>`. Called per request; may return `null` before login. |
+| `headers` | — | Full control over auth headers, for any other scheme. May be async. Merged over `getToken`. |
+| `credentials` | `'include'` | Passed to `fetch`, so cookie-authenticated apps need no token plumbing at all. |
 | `defaultEnabled` | `true` | What to assume before the first successful response. |
 | `ttl` | `60_000` | Fallback, in ms. The server's `poll_interval` wins. |
 | `unauthenticatedTtl` | `60_000` | Wait after a 401/403. |
