@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-SeliseSentry::Engine.routes.draw do
+Sentrifig::Engine.routes.draw do
   root to: "dashboard#show"
 
   post "enable",  to: "dashboard#enable",  as: :enable

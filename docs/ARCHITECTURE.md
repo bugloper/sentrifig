@@ -1,4 +1,4 @@
-# selise-sentry: architecture and design notes
+# sentrifig: architecture and design notes
 
 This document records the investigation that preceded the implementation, the
 decisions taken, the alternatives rejected, and the measured characteristics.
@@ -100,7 +100,7 @@ database the default is always right.
 ### 3.2 Schema
 
 ```text
-selise_sentry_settings
+sentrifig_settings
   id
   environment   string  not null, unique index
   enabled       boolean not null, default true
@@ -127,7 +127,7 @@ guarantees installing the gem cannot silently disable Sentry.
 
 ### 4.1 Runtime snapshot
 
-`SeliseSentry::Runtime` holds:
+`Sentrifig::Runtime` holds:
 
 ```ruby
 @snapshot        # frozen Struct(enabled, source, changed_by, changed_at) or nil
@@ -227,7 +227,7 @@ with a warm cache:
 
 | Operation | Cost |
 | --- | --- |
-| `SeliseSentry.enabled?` | ~390 ns |
+| `Sentrifig.enabled?` | ~390 ns |
 | gate processor call (`PROCESSOR.call(event, hint)`) | ~530 ns |
 | Database read | at most 1 per process per `cache_ttl`, single indexed row, only while events flow |
 | Hot-path logging | none |
@@ -238,10 +238,10 @@ the breadcrumb buffer per event; the gate is well below noise.
 ## 8a. Gem-owned Sentry.init (`SentrySetup`)
 
 Selise applications carried an identical 150-line `config/initializers/sentry.rb`
-each. The gem now owns it: `SeliseSentry::SentrySetup.apply_defaults` sets the
+each. The gem now owns it: `Sentrifig::SentrySetup.apply_defaults` sets the
 env-driven defaults (listed in the README), the Authorization-stripping
 `before_send`, Sentry Logs off, and the path-aware traces sampler; blocks
-registered through `SeliseSentry.configure { |c| c.sentry { |s| ... } }` run
+registered through `Sentrifig.configure { |c| c.sentry { |s| ... } }` run
 afterwards.
 
 Ordering is the interesting part. `Sentry.init` must happen after the
@@ -265,36 +265,36 @@ flag.
 
 ## 9. Rails integration
 
-- `SeliseSentry::Engine` with `isolate_namespace`, standard `app/`, `config/routes.rb`,
-  `db/migrate`, `lib/tasks`. Mounted with `mount SeliseSentry::Engine => "/selise-sentry"`.
-- `config.after_initialize { SeliseSentry.install! }` registers the gate after
+- `Sentrifig::Engine` with `isolate_namespace`, standard `app/`, `config/routes.rb`,
+  `db/migrate`, `lib/tasks`. Mounted with `mount Sentrifig::Engine => "/sentrifig"`.
+- `config.after_initialize { Sentrifig.install! }` registers the gate after
   the host's initializers (including `Sentry.init`) have run. Because the hook
   is class-level, ordering is not critical; `install!` is idempotent and keyed
   on the processor object identity, not a flag.
 - The migration was generated with `rails g migration` (real timestamp) and
   pinned to `ActiveRecord::Migration[7.1]` so hosts on Rails 7.1 through 8.x
-  run it unchanged. `rails selise_sentry:install` copies it with
+  run it unchanged. `rails sentrifig:install` copies it with
   `ActiveRecord::Migration.copy` (the same mechanism as
   `railties:install:migrations`), re-stamping the timestamp and appending
-  `.selise_sentry.rb`, and reports both copied and skipped files so it is safe
+  `.sentrifig.rb`, and reports both copied and skipped files so it is safe
   to re-run.
 - `Setting < ActiveRecord::Base` uses the primary connection.
 
 ## 10. Public API surface
 
 ```ruby
-SeliseSentry.configure { |c| ...; c.sentry { |sentry| ... } }
-SeliseSentry.configuration
-SeliseSentry.enabled?
-SeliseSentry.enable!(by: nil)
-SeliseSentry.disable!(by: nil)
-SeliseSentry.status        # Runtime::Status
-SeliseSentry.current_environment
-SeliseSentry.refresh!
-SeliseSentry.install!
-SeliseSentry.logger
-SeliseSentry::SentrySetup::STRIP_AUTHORIZATION, DEFAULT_TRACES_SAMPLER
-SeliseSentry::TestHelper   # require "selise_sentry/test_helper" or "selise_sentry/rspec"
+Sentrifig.configure { |c| ...; c.sentry { |sentry| ... } }
+Sentrifig.configuration
+Sentrifig.enabled?
+Sentrifig.enable!(by: nil)
+Sentrifig.disable!(by: nil)
+Sentrifig.status        # Runtime::Status
+Sentrifig.current_environment
+Sentrifig.refresh!
+Sentrifig.install!
+Sentrifig.logger
+Sentrifig::SentrySetup::STRIP_AUTHORIZATION, DEFAULT_TRACES_SAMPLER
+Sentrifig::TestHelper   # require "sentrifig/test_helper" or "sentrifig/rspec"
 ```
 
 Everything else (`Runtime`, `Store`, `Gate`, `Setting`) is implementation and

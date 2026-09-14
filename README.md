@@ -1,8 +1,8 @@
-# selise-sentry
+# sentrifig
 
 A runtime on/off switch for [Sentry](https://sentry.io) in Rails applications.
 
-`selise-sentry` is a small extension around `sentry-ruby` and `sentry-rails`
+`sentrifig` is a small extension around `sentry-ruby` and `sentry-rails`
 that does two things for a Rails application:
 
 1. **Owns the Sentry setup.** It calls `Sentry.init` with Selise's defaults,
@@ -17,7 +17,7 @@ that does two things for a Rails application:
    four-method Ruby API, all backed by the same persisted state.
 
 ```text
-Selise Sentry
+Sentrifig
 
 Environment: production
 
@@ -61,7 +61,7 @@ identical errors, or a load test is about to run against staging. Normally that
 means editing `config.enabled` or an environment variable and redeploying,
 because `Sentry.init` runs once at boot.
 
-`selise-sentry` puts a runtime gate in front of Sentry's event pipeline and
+`sentrifig` puts a runtime gate in front of Sentry's event pipeline and
 gives you a button and a rake task to flip it. The gate is consulted for every
 event, costs a few hundred nanoseconds, and never queries the database on the
 event path more than once per few seconds per process.
@@ -83,14 +83,14 @@ Add the gem after `rails` (and after `sentry-rails` if you list it) in your
 ```ruby
 gem "sentry-ruby"
 gem "sentry-rails"
-gem "selise-sentry"
+gem "sentrifig"
 ```
 
 Then:
 
 ```bash
 bundle install
-bin/rails selise_sentry:install   # copies the migration and prints next steps
+bin/rails sentrifig:install   # copies the migration and prints next steps
 bin/rails db:migrate
 ```
 
@@ -106,15 +106,15 @@ init.
 
 ## Configuration
 
-No initializer is required. Set `SELISE_SENTRY_USERNAME` and
-`SELISE_SENTRY_PASSWORD` in the environment and everything else has a default.
-Create `config/initializers/selise_sentry.rb` only to change something:
+No initializer is required. Set `SENTRIFIG_USERNAME` and
+`SENTRIFIG_PASSWORD` in the environment and everything else has a default.
+Create `config/initializers/sentrifig.rb` only to change something:
 
 ```ruby
-# config/initializers/selise_sentry.rb  (optional)
-SeliseSentry.configure do |config|
-  # config.username = ENV.fetch("SELISE_SENTRY_USERNAME")   # default
-  # config.password = ENV.fetch("SELISE_SENTRY_PASSWORD")   # default
+# config/initializers/sentrifig.rb  (optional)
+Sentrifig.configure do |config|
+  # config.username = ENV.fetch("SENTRIFIG_USERNAME")   # default
+  # config.password = ENV.fetch("SENTRIFIG_PASSWORD")   # default
   # config.enabled_by_default = true     # state when no row exists yet
   # config.cache_ttl = 5                 # seconds a process trusts its cached state
   # config.environment = <Sentry's env>  # key under which the state is stored
@@ -130,17 +130,17 @@ end
 
 | Option | Default | Purpose |
 | --- | --- | --- |
-| `username`, `password` | `ENV["SELISE_SENTRY_USERNAME"]`, `ENV["SELISE_SENTRY_PASSWORD"]` | HTTP Basic Auth credentials for the UI. If either is blank, **every** engine request is refused with 401 and an error is logged. The application itself keeps working. |
-| `enabled_by_default` | `true` | Value of `SeliseSentry.enabled?` when the database holds no row for the environment. See [Default behaviour](#default-behaviour). |
+| `username`, `password` | `ENV["SENTRIFIG_USERNAME"]`, `ENV["SENTRIFIG_PASSWORD"]` | HTTP Basic Auth credentials for the UI. If either is blank, **every** engine request is refused with 401 and an error is logged. The application itself keeps working. |
+| `enabled_by_default` | `true` | Value of `Sentrifig.enabled?` when the database holds no row for the environment. See [Default behaviour](#default-behaviour). |
 | `cache_ttl` | `5` | Seconds each process trusts its in-memory copy of the state before re-reading the database. Bounds cross-process propagation delay. `0` re-reads on every event (fine for tests, not for production). |
 | `environment` | the environment Sentry reports (`Sentry.configuration.environment`, so `RUNTIME_ENVIRONMENT` with the defaults), `Rails.env` before Sentry is initialised | Row key and the name shown in the UI. Staging and production are told apart even when both run with `Rails.env == "production"`. |
-| `logger` | `Rails.logger` | Where `[selise-sentry]` lines go. |
+| `logger` | `Rails.logger` | Where `[sentrifig]` lines go. |
 | `initialize_sentry` | `true` | Whether the gem calls `Sentry.init` with the [Sentry defaults](#sentry-defaults). |
 | `sentry { \|sentry\| ... }` | none | Registers a block run against the `Sentry::Configuration` after the defaults. May be called several times; blocks run in order. |
 
 `configure` validates types (`cache_ttl` must be a non-negative number,
 `enabled_by_default` a boolean, `environment` non-blank) and raises
-`SeliseSentry::ConfigurationError` otherwise. Missing credentials are
+`Sentrifig::ConfigurationError` otherwise. Missing credentials are
 deliberately *not* a boot error.
 
 ## Sentry defaults
@@ -161,7 +161,7 @@ defaults it applies:
 | `send_default_pii` | `SENTRY_PII_ENABLE` (default false) |
 | `sample_rate` | `SENTRY_SAMPLE_RATE` (default 1.0) |
 | `traces_sample_rate`, `traces_sampler` | only when `SENTRY_TRACING_ENABLE` is true: `SENTRY_TRACING_SAMPLE_RATE` (default 1.0) and the default sampler below |
-| `before_send` | `SeliseSentry::SentrySetup::STRIP_AUTHORIZATION`: removes the `Authorization` header (any casing) from the request and from HTTP breadcrumb data |
+| `before_send` | `Sentrifig::SentrySetup::STRIP_AUTHORIZATION`: removes the `Authorization` header (any casing) from the request and from HTTP breadcrumb data |
 | `rails.structured_logging.enabled` | `false` (Sentry Logs off; sentry-rails 7 turns it on by default) |
 | `excluded_exceptions` | `+ ActionController::RoutingError, ActiveRecord::RecordNotFound` |
 | `inspect_exception_causes_for_exclusion` | `false` |
@@ -186,7 +186,7 @@ path family (`/healthier` 0.2, `/oauth` and `/api` 0.3, `/graphql` 0.4, other
 Anything can be overridden per application:
 
 ```ruby
-SeliseSentry.configure do |config|
+Sentrifig.configure do |config|
   config.sentry do |sentry|
     sentry.traces_sampler = nil
     sentry.traces_sample_rate = 0.05
@@ -197,22 +197,22 @@ end
 
 ## Database migration
 
-`bin/rails selise_sentry:install` copies this migration into your app:
+`bin/rails sentrifig:install` copies this migration into your app:
 
 ```ruby
-create_table :selise_sentry_settings do |t|
+create_table :sentrifig_settings do |t|
   t.string  :environment, null: false
   t.boolean :enabled,     null: false, default: true
   t.string  :changed_by
   t.timestamps
 end
-add_index :selise_sentry_settings, :environment, unique: true
+add_index :sentrifig_settings, :environment, unique: true
 ```
 
 One row per environment, enforced by the unique index. The migration is
 additive only (no destructive operations) and uses the Rails 7.1 migration API
 so it runs unchanged on any supported Rails version. The equivalent Rails
-built-in, `bin/rails selise_sentry:install:migrations`, also works.
+built-in, `bin/rails sentrifig:install:migrations`, also works.
 
 Why one table keyed by environment rather than a table per environment or an
 external store: every Rails environment already has its own database, so in
@@ -227,11 +227,11 @@ schema that is correct in every layout.
 ```ruby
 # config/routes.rb
 Rails.application.routes.draw do
-  mount SeliseSentry::Engine => "/selise-sentry"
+  mount Sentrifig::Engine => "/sentrifig"
 end
 ```
 
-Visit `https://your-app.example.com/selise-sentry`, authenticate, and you will
+Visit `https://your-app.example.com/sentrifig`, authenticate, and you will
 see the dashboard. Any mount path works.
 
 The engine is namespace-isolated: its controllers inherit from
@@ -251,9 +251,9 @@ no page content.
 Supply credentials from the environment or from Rails credentials:
 
 ```ruby
-SeliseSentry.configure do |config|
-  config.username = Rails.application.credentials.dig(:selise_sentry, :username)
-  config.password = Rails.application.credentials.dig(:selise_sentry, :password)
+Sentrifig.configure do |config|
+  config.username = Rails.application.credentials.dig(:sentrifig, :username)
+  config.password = Rails.application.credentials.dig(:sentrifig, :password)
 end
 ```
 
@@ -278,16 +278,16 @@ with a CSRF token. The operator's Basic Auth username is recorded as
 **Rake tasks**:
 
 ```bash
-$ bin/rails selise_sentry:status
+$ bin/rails sentrifig:status
 Environment: production
 Sentry: ENABLED
 Note: no stored setting yet, showing default
 
-$ bin/rails selise_sentry:disable
+$ bin/rails sentrifig:disable
 Environment: production
 Sentry: DISABLED
 
-$ bin/rails selise_sentry:enable
+$ bin/rails sentrifig:enable
 Environment: production
 Sentry: ENABLED
 ```
@@ -295,21 +295,21 @@ Sentry: ENABLED
 **Ruby API**:
 
 ```ruby
-SeliseSentry.enabled?              # => true    (hot path, in-memory)
-SeliseSentry.disable!(by: "alice") # persists, applies now, logs, returns false
-SeliseSentry.enable!(by: "alice")  # => true
-SeliseSentry.status                # => Status(enabled:, environment:, source:, changed_by:, changed_at:, cache_ttl:)
-SeliseSentry.status.label          # => "ENABLED" / "DISABLED"
-SeliseSentry.current_environment   # => "production"
-SeliseSentry.refresh!              # re-read the database now instead of waiting for cache_ttl
+Sentrifig.enabled?              # => true    (hot path, in-memory)
+Sentrifig.disable!(by: "alice") # persists, applies now, logs, returns false
+Sentrifig.enable!(by: "alice")  # => true
+Sentrifig.status                # => Status(enabled:, environment:, source:, changed_by:, changed_at:, cache_ttl:)
+Sentrifig.status.label          # => "ENABLED" / "DISABLED"
+Sentrifig.current_environment   # => "production"
+Sentrifig.refresh!              # re-read the database now instead of waiting for cache_ttl
 ```
 
-`enable!`/`disable!` raise `SeliseSentry::PersistenceError` (with `#cause`) if
+`enable!`/`disable!` raise `Sentrifig::PersistenceError` (with `#cause`) if
 the row cannot be written; the previous state stays in effect.
 
 ## Runtime behaviour: what "disabled" means
 
-`selise-sentry` registers **one global event processor** with sentry-ruby
+`sentrifig` registers **one global event processor** with sentry-ruby
 (`Sentry.add_global_event_processor`). Global processors run inside
 `Sentry::Scope#apply_to_event` for every event the SDK is about to send, before
 the application's own `before_send` callbacks. When Sentry is disabled the
@@ -352,8 +352,8 @@ and never modifies your Sentry configuration.
 **Installing the gem never turns Sentry off.**
 
 ```text
-Sentry configured, gem installed, no row in selise_sentry_settings
-    -> SeliseSentry.enabled? == true (enabled_by_default)
+Sentry configured, gem installed, no row in sentrifig_settings
+    -> Sentrifig.enabled? == true (enabled_by_default)
     -> Sentry behaves exactly as before
 ```
 
@@ -374,14 +374,14 @@ Control plane                          Data plane (every process)
  UI / rake / API                        Sentry.capture_exception
        │                                          │
        ▼                                          ▼
- selise_sentry_settings  ◀── re-read ──  in-memory snapshot  ── enabled? ──▶ Sentry
+ sentrifig_settings  ◀── re-read ──  in-memory snapshot  ── enabled? ──▶ Sentry
    (one row / env)          ≤ 1 per          (Runtime)                        pipeline
                             cache_ttl
                             per process
 ```
 
 Each process holds one immutable snapshot `{enabled, source, changed_by,
-changed_at}` and a monotonic "next refresh" timestamp. `SeliseSentry.enabled?`
+changed_at}` and a monotonic "next refresh" timestamp. `Sentrifig.enabled?`
 reads the snapshot and compares the clock; that is the whole hot path. When
 the snapshot is older than `cache_ttl`, the *first* caller to notice performs a
 single-row database read and installs a new snapshot; any concurrent callers
@@ -444,7 +444,7 @@ operational admin tool.
 - **Authentication**: HTTP Basic Auth on every route, constant-time comparison
   of SHA-256 digests (no length leak), no access at all when credentials are
   unconfigured.
-- **State changes are `POST` only**. `GET /selise-sentry/disable` is not a route
+- **State changes are `POST` only**. `GET /sentrifig/disable` is not a route
   (404). `PATCH`/`PUT`/`DELETE` are not routes either.
 - **CSRF**: `protect_from_forgery with: :exception`. Forms carry the Rails
   authenticity token; a `POST` without it is rejected with 422 and changes
@@ -469,11 +469,11 @@ your other admin endpoints.
 
 | Task | Effect |
 | --- | --- |
-| `bin/rails selise_sentry:install` | Copy the migration into `db/migrate` (idempotent) and print next steps. |
-| `bin/rails selise_sentry:status` | Print environment, state, and who changed it. Reads the database. |
-| `bin/rails selise_sentry:enable` | Turn Sentry on for `Rails.env`; records `changed_by = "rake"`. |
-| `bin/rails selise_sentry:disable` | Turn Sentry off for `Rails.env`; records `changed_by = "rake"`. |
-| `bin/rails selise_sentry:test_event` | Capture a test message and report what happened: accepted by the SDK (exit 0), dropped by the switch (exit 2), or the SDK itself cannot send from this process, with the reason (exit 1). |
+| `bin/rails sentrifig:install` | Copy the migration into `db/migrate` (idempotent) and print next steps. |
+| `bin/rails sentrifig:status` | Print environment, state, and who changed it. Reads the database. |
+| `bin/rails sentrifig:enable` | Turn Sentry on for `Rails.env`; records `changed_by = "rake"`. |
+| `bin/rails sentrifig:disable` | Turn Sentry off for `Rails.env`; records `changed_by = "rake"`. |
+| `bin/rails sentrifig:test_event` | Capture a test message and report what happened: accepted by the SDK (exit 0), dropped by the switch (exit 2), or the SDK itself cannot send from this process, with the reason (exit 1). |
 
 `status` also prints whether the SDK is able to send at all (`SDK: ready to
 send` or `SDK: not sending (DSN not set or not valid)`), and the dashboard shows
@@ -484,12 +484,12 @@ To verify a deployment end to end, toggle it in the UI and run the task in a
 pod of that environment:
 
 ```bash
-bin/rails selise_sentry:test_event   # ENABLED  -> "Event <id> accepted ...", visible in Sentry
-bin/rails selise_sentry:disable
-bin/rails selise_sentry:test_event   # DISABLED -> "Event dropped by selise-sentry", exit 2
+bin/rails sentrifig:test_event   # ENABLED  -> "Event <id> accepted ...", visible in Sentry
+bin/rails sentrifig:disable
+bin/rails sentrifig:test_event   # DISABLED -> "Event dropped by sentrifig", exit 2
 ```
 
-The tasks call the same `SeliseSentry.enable!`/`disable!`/`status` used by the
+The tasks call the same `Sentrifig.enable!`/`disable!`/`status` used by the
 UI. Run them with the target `RAILS_ENV` and database configuration, for
 example inside a production console container.
 
@@ -498,13 +498,13 @@ example inside a production console container.
 Only transitions are logged, never the hot path:
 
 ```text
-[selise-sentry] Sentry disabled environment=production by=alice
-[selise-sentry] Sentry enabled environment=production by=rake
-[selise-sentry] Sentry enabled (picked up from database) environment=production by=rake
-[selise-sentry] could not read state (ActiveRecord::ConnectionNotEstablished: ...); keeping Sentry enabled for environment=production, retrying in 5s
-[selise-sentry] database reachable again; Sentry enabled environment=production
-[selise-sentry] could not persist Sentry disabled for environment=production: ...
-[selise-sentry] refusing request to /selise-sentry: username/password are not configured (see SeliseSentry.configure)
+[sentrifig] Sentry disabled environment=production by=alice
+[sentrifig] Sentry enabled environment=production by=rake
+[sentrifig] Sentry enabled (picked up from database) environment=production by=rake
+[sentrifig] could not read state (ActiveRecord::ConnectionNotEstablished: ...); keeping Sentry enabled for environment=production, retrying in 5s
+[sentrifig] database reachable again; Sentry enabled environment=production
+[sentrifig] could not persist Sentry disabled for environment=production: ...
+[sentrifig] refusing request to /sentrifig: username/password are not configured (see Sentrifig.configure)
 ```
 
 The first two lines come from the process that made the change; the third
@@ -527,7 +527,7 @@ own `Sentry::DummyTransport`, so nothing is sent anywhere.
 
 ### In your application's tests
 
-Use `SeliseSentry::TestHelper`. It wraps Sentry's own `Sentry::TestHelper`
+Use `Sentrifig::TestHelper`. It wraps Sentry's own `Sentry::TestHelper`
 (dummy DSN, `Sentry::DummyTransport`, nothing leaves the process) and adds two
 things the switch needs: the in-process cache is reset around each test, and
 the gate is re-installed after setup, because `teardown_sentry_test` clears
@@ -537,20 +537,20 @@ every later test.
 RSpec:
 
 ```ruby
-# spec/support/selise_sentry.rb (or rails_helper.rb)
-require "selise_sentry/rspec"
+# spec/support/sentrifig.rb (or rails_helper.rb)
+require "sentrifig/rspec"
 
 # spec/requests/sentry_switch_spec.rb
-RSpec.describe "Sentry switch", :selise_sentry do
+RSpec.describe "Sentry switch", :sentrifig do
   it "drops events while disabled" do
-    SeliseSentry.disable!
+    Sentrifig.disable!
     Sentry.capture_exception(StandardError.new("hidden"))
     expect(sentry_error_events).to be_empty
   end
 
   it "admits the dashboard with credentials" do
-    with_selise_sentry_credentials("ops", "pw") do
-      get "/selise-sentry", headers: selise_sentry_basic_auth("ops", "pw")
+    with_sentrifig_credentials("ops", "pw") do
+      get "/sentrifig", headers: sentrifig_basic_auth("ops", "pw")
     end
     expect(response).to have_http_status(:ok)
   end
@@ -561,16 +561,16 @@ Minitest:
 
 ```ruby
 class SentrySwitchTest < ActiveSupport::TestCase
-  include SeliseSentry::TestHelper
-  setup    { setup_selise_sentry_test }
-  teardown { teardown_selise_sentry_test }
+  include Sentrifig::TestHelper
+  setup    { setup_sentrifig_test }
+  teardown { teardown_sentrifig_test }
 end
 ```
 
 Helpers: `sentry_events` and `last_sentry_event` (from Sentry),
 `sentry_error_events` (errors and messages only, no transactions),
-`with_selise_sentry_credentials(user, pass) { }`,
-`selise_sentry_basic_auth(user, pass)`.
+`with_sentrifig_credentials(user, pass) { }`,
+`sentrifig_basic_auth(user, pass)`.
 
 ### Try it locally with the demo application
 
@@ -580,20 +580,20 @@ set `SENTRY_DSN`.
 
 ```bash
 cd test/dummy
-bin/rails selise_sentry:install && bin/rails db:migrate
-SELISE_SENTRY_USERNAME=ops SELISE_SENTRY_PASSWORD=pw bundle exec puma -p 3000 config.ru
+bin/rails sentrifig:install && bin/rails db:migrate
+SENTRIFIG_USERNAME=ops SENTRIFIG_PASSWORD=pw bundle exec puma -p 3000 config.ru
 ```
 
 Then, in another terminal:
 
 ```bash
 curl -s localhost:3000/capture                 # => captured event <id>
-open http://localhost:3000/selise-sentry       # log in as ops / pw, click "Disable Sentry"
-curl -s localhost:3000/capture                 # => dropped by selise-sentry
-bin/rails selise_sentry:status                 # second process sees DISABLED
-bin/rails selise_sentry:enable                 # flip it back from the CLI
+open http://localhost:3000/sentrifig       # log in as ops / pw, click "Disable Sentry"
+curl -s localhost:3000/capture                 # => dropped by sentrifig
+bin/rails sentrifig:status                 # second process sees DISABLED
+bin/rails sentrifig:enable                 # flip it back from the CLI
 sleep 5; curl -s localhost:3000/capture        # server picked it up: captured event <id>
-grep selise-sentry log/development.log
+grep sentrifig log/development.log
 ```
 
 No restart, no redeploy, no environment change.
@@ -603,9 +603,9 @@ No restart, no redeploy, no environment change.
 1. Ship the migration with a normal deploy and run `db:migrate`. It is additive
    and safe to run while old code is still serving traffic (old code does not
    know the table exists).
-2. Set `SELISE_SENTRY_USERNAME` and `SELISE_SENTRY_PASSWORD` (or the
+2. Set `SENTRIFIG_USERNAME` and `SENTRIFIG_PASSWORD` (or the
    credentials keys you chose) in every environment where the UI is mounted.
-3. Mount the engine and confirm `/selise-sentry` returns 401 without
+3. Mount the engine and confirm `/sentrifig` returns 401 without
    credentials and the dashboard with them.
 4. Leave `cache_ttl` at 5 unless you have a reason to change it.
 5. Rolling deploys are safe: new processes read the current row at their first
@@ -615,23 +615,23 @@ No restart, no redeploy, no environment change.
 
 ## Troubleshooting
 
-**Every request to `/selise-sentry` returns 401, even with the right password.**
+**Every request to `/sentrifig` returns 401, even with the right password.**
 Credentials are not configured (both `username` and `password` must be
 non-blank strings). Look for
-`[selise-sentry] refusing request ... username/password are not configured` in
+`[sentrifig] refusing request ... username/password are not configured` in
 the log.
 
 **The dashboard says "The database is currently unreachable".**
 The row could not be read. Most often the migration has not been run
-(`Could not find table 'selise_sentry_settings'` in the log). Run
-`bin/rails selise_sentry:install && bin/rails db:migrate`. Sentry keeps its
+(`Could not find table 'sentrifig_settings'` in the log). Run
+`bin/rails sentrifig:install && bin/rails db:migrate`. Sentry keeps its
 last known (or default, enabled) state meanwhile.
 
 **I disabled Sentry but another process still sent an event.**
 Expected for up to `cache_ttl` seconds after the change. Check timestamps; if
 it persists, confirm the processes share the same database and `Rails.env`.
 
-**`POST /selise-sentry/disable` returns 422.**
+**`POST /sentrifig/disable` returns 422.**
 CSRF token missing or stale. Use the button on the dashboard (or send the
 `authenticity_token` from the page with the session cookie). This also happens
 in API-only applications (`config.api_only = true`) that have no cookie/session
@@ -639,7 +639,7 @@ middleware; add `ActionDispatch::Cookies` and `ActionDispatch::Session::CookieSt
 for the engine to work there.
 
 **I use multiple databases.**
-`SeliseSentry::Setting` inherits from `ActiveRecord::Base` and therefore uses
+`Sentrifig::Setting` inherits from `ActiveRecord::Base` and therefore uses
 the primary (writing) connection. Install the migration in the primary database.
 
 **Sentry structured logs / metrics still arrive while disabled.**
@@ -656,7 +656,7 @@ The app still has its own `Sentry.init`. Delete it to get the defaults, or set
 `config.initialize_sentry = false` to keep it and silence the warning.
 
 **My tests lost the switch after the first example.**
-Use `SeliseSentry::TestHelper` / `require "selise_sentry/rspec"` instead of
+Use `Sentrifig::TestHelper` / `require "sentrifig/rspec"` instead of
 `Sentry::TestHelper` directly; see [Testing](#testing).
 
 ## Architecture overview
@@ -665,20 +665,20 @@ Full design notes, alternatives considered, and measurements are in
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). In short:
 
 ```text
-lib/selise_sentry.rb            public API (enabled?, enable!, disable!, status, ...)
-lib/selise_sentry/configuration.rb   options + validation
-lib/selise_sentry/runtime.rb    in-memory snapshot, TTL refresh, degradation, logging
-lib/selise_sentry/store.rb      ActiveRecord persistence (single-row upsert, retry on race)
-lib/selise_sentry/gate.rb       the Sentry global event processor
-lib/selise_sentry/sentry_setup.rb    Selise's default Sentry.init (env-driven) + before_send + sampler
-lib/selise_sentry/test_helper.rb     test support (Minitest/RSpec); lib/selise_sentry/rspec.rb wires RSpec
-lib/selise_sentry/engine.rb     Rails engine, installs the gate after boot
-lib/tasks/selise_sentry.rake    install / status / enable / disable
+lib/sentrifig.rb            public API (enabled?, enable!, disable!, status, ...)
+lib/sentrifig/configuration.rb   options + validation
+lib/sentrifig/runtime.rb    in-memory snapshot, TTL refresh, degradation, logging
+lib/sentrifig/store.rb      ActiveRecord persistence (single-row upsert, retry on race)
+lib/sentrifig/gate.rb       the Sentry global event processor
+lib/sentrifig/sentry_setup.rb    Selise's default Sentry.init (env-driven) + before_send + sampler
+lib/sentrifig/test_helper.rb     test support (Minitest/RSpec); lib/sentrifig/rspec.rb wires RSpec
+lib/sentrifig/engine.rb     Rails engine, installs the gate after boot
+lib/tasks/sentrifig.rake    install / status / enable / disable
 app/                            controllers, model, views of the mounted UI
 db/migrate/                     the single migration
 ```
 
-- **Sentry setup**: `SeliseSentry::SentrySetup` applies the env-driven
+- **Sentry setup**: `Sentrifig::SentrySetup` applies the env-driven
   defaults inside `Sentry.init`, then the application's `config.sentry` blocks.
 - **Interception**: one `Sentry.add_global_event_processor` block returning
   `nil` when disabled. No monkey-patching, no change to `Sentry.configuration`.
@@ -702,8 +702,8 @@ db/migrate/                     the single migration
 
   ```ruby
   Sentry.init do |config|
-    config.before_send_log    = ->(log)    { SeliseSentry.enabled? ? log : nil }
-    config.before_send_metric = ->(metric) { SeliseSentry.enabled? ? metric : nil }
+    config.before_send_log    = ->(log)    { Sentrifig.enabled? ? log : nil }
+    config.before_send_metric = ->(metric) { Sentrifig.enabled? ? metric : nil }
   end
   ```
 

@@ -8,5 +8,5 @@
 /test/dummy/db/*.sqlite3
 /test/dummy/db/*.sqlite3-*
 Gemfile.lock
-/test/dummy/db/migrate/*.selise_sentry.rb
+/test/dummy/db/migrate/*.sentrifig.rb
 /test/dummy/db/schema.rb

@@ -9,7 +9,7 @@ class DemoController < ActionController::Base
   # when the gate discarded it, which makes the switch observable via curl.
   def capture
     event = Sentry.capture_message("manual capture from the demo app")
-    render plain: event ? "captured event #{event.event_id}" : "dropped by selise-sentry"
+    render plain: event ? "captured event #{event.event_id}" : "dropped by sentrifig"
   end
 
   # Unhandled exception: captured by Sentry::Rails::CaptureExceptions.

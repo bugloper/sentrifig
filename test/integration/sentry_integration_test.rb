@@ -6,13 +6,13 @@ require "test_helper"
 # using Sentry's own DummyTransport: events that reach the transport would
 # have been sent to Sentry.
 class SentryIntegrationTest < ActionDispatch::IntegrationTest
-  include SeliseSentry::TestHelper
+  include Sentrifig::TestHelper
 
   setup do
-    SeliseSentry::Setting.delete_all
-    SeliseSentry.reset!
-    configure_selise_sentry
-    setup_selise_sentry_test do |config|
+    Sentrifig::Setting.delete_all
+    Sentrifig.reset!
+    configure_sentrifig
+    setup_sentrifig_test do |config|
       config.before_send = lambda do |event, _hint|
         @before_send_calls = (@before_send_calls || 0) + 1
         event
@@ -21,8 +21,8 @@ class SentryIntegrationTest < ActionDispatch::IntegrationTest
   end
 
   teardown do
-    teardown_selise_sentry_test
-    SeliseSentry.reset!
+    teardown_sentrifig_test
+    Sentrifig.reset!
   end
 
   # Requests also produce TransactionEvents (traces_sample_rate = 1.0 in the
@@ -37,7 +37,7 @@ class SentryIntegrationTest < ActionDispatch::IntegrationTest
   end
 
   test "Sentry.capture_exception is discarded while disabled" do
-    SeliseSentry.disable!
+    Sentrifig.disable!
     result = Sentry.capture_exception(RuntimeError.new("off"))
     assert_nil result
     assert_empty sentry_events
@@ -46,18 +46,18 @@ class SentryIntegrationTest < ActionDispatch::IntegrationTest
   end
 
   test "capture_message is discarded while disabled" do
-    SeliseSentry.disable!
+    Sentrifig.disable!
     Sentry.capture_message("off")
     assert_empty sentry_events
   end
 
   test "transactions are discarded while disabled and resume when enabled" do
-    SeliseSentry.disable!
+    Sentrifig.disable!
     tx = Sentry.start_transaction(name: "job", op: "test")
     tx.finish
     assert_empty sentry_events
 
-    SeliseSentry.enable!
+    Sentrifig.enable!
     tx = Sentry.start_transaction(name: "job", op: "test")
     tx.finish
     assert_equal ["transaction"], sentry_events.map(&:type)
@@ -65,18 +65,18 @@ class SentryIntegrationTest < ActionDispatch::IntegrationTest
 
   test "runtime toggle without restart: off, on, off again in one process" do
     Sentry.capture_message("1")
-    SeliseSentry.disable!
+    Sentrifig.disable!
     Sentry.capture_message("2")
-    SeliseSentry.enable!
+    Sentrifig.enable!
     Sentry.capture_message("3")
-    SeliseSentry.disable!
+    Sentrifig.disable!
     Sentry.capture_message("4")
 
     assert_equal %w[1 3], sentry_events.map(&:message)
   end
 
   test "breadcrumbs, tags, user and context keep working while disabled and appear once re-enabled" do
-    SeliseSentry.disable!
+    Sentrifig.disable!
     Sentry.add_breadcrumb(Sentry::Breadcrumb.new(message: "while off"))
     Sentry.set_tags(feature: "gate")
     Sentry.set_user(id: 42)
@@ -84,7 +84,7 @@ class SentryIntegrationTest < ActionDispatch::IntegrationTest
     Sentry.capture_message("dropped")
     assert_empty sentry_events
 
-    SeliseSentry.enable!
+    Sentrifig.enable!
     Sentry.capture_message("kept")
 
     event = last_sentry_event
@@ -103,7 +103,7 @@ class SentryIntegrationTest < ActionDispatch::IntegrationTest
   end
 
   test "an unhandled Rails controller exception is not captured while disabled" do
-    SeliseSentry.disable!
+    Sentrifig.disable!
     get "/boom"
     assert_response :internal_server_error
     assert_empty sentry_events, "neither the error nor the request transaction is sent"
@@ -113,7 +113,7 @@ class SentryIntegrationTest < ActionDispatch::IntegrationTest
     Rails.error.report(RuntimeError.new("handled on"), handled: true)
     assert_equal 1, error_events.size
 
-    SeliseSentry.disable!
+    Sentrifig.disable!
     Rails.error.report(RuntimeError.new("handled off"), handled: true)
     assert_equal 1, error_events.size
 
@@ -123,34 +123,34 @@ class SentryIntegrationTest < ActionDispatch::IntegrationTest
   end
 
   test "toggling through the mounted UI immediately affects capture in the same process" do
-    post "/selise-sentry/disable", headers: basic_auth
-    assert_redirected_to "/selise-sentry/"
+    post "/sentrifig/disable", headers: basic_auth
+    assert_redirected_to "/sentrifig/"
     Sentry.capture_exception(RuntimeError.new("after ui disable"))
     assert_empty sentry_events
 
-    post "/selise-sentry/enable", headers: basic_auth
+    post "/sentrifig/enable", headers: basic_auth
     Sentry.capture_exception(RuntimeError.new("after ui enable"))
     assert_equal 1, error_events.size
   end
 
   test "a change made by another process is picked up after the cache TTL" do
-    configure_selise_sentry(cache_ttl: 60)
+    configure_sentrifig(cache_ttl: 60)
     Sentry.capture_message("before")
     assert_equal 1, sentry_events.size
 
     # Another process writes directly to the shared database.
-    SeliseSentry::Setting.create!(environment: "test", enabled: false, changed_by: "other-process")
+    Sentrifig::Setting.create!(environment: "test", enabled: false, changed_by: "other-process")
     Sentry.capture_message("still cached")
     assert_equal 2, sentry_events.size, "inside the TTL the cached value is used"
 
     # Simulate the TTL elapsing by swapping the runtime's clock forward.
-    SeliseSentry.runtime.instance_variable_set(:@next_refresh_at, 0.0)
+    Sentrifig.runtime.instance_variable_set(:@next_refresh_at, 0.0)
     Sentry.capture_message("after ttl")
     assert_equal 2, sentry_events.size
   end
 
   test "Sentry.capture_exception never raises even if the store is broken" do
-    SeliseSentry::Setting.stub(:where, ->(*) { raise ActiveRecord::StatementInvalid, "no such table" }) do
+    Sentrifig::Setting.stub(:where, ->(*) { raise ActiveRecord::StatementInvalid, "no such table" }) do
       assert_nothing_raised { Sentry.capture_exception(RuntimeError.new("db down")) }
     end
     assert_equal 1, sentry_events.size, "fails open: default is enabled"

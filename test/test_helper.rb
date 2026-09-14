@@ -5,13 +5,13 @@ ENV["RAILS_ENV"] = "test"
 require_relative "dummy/config/environment"
 require "rails/test_help"
 require "minitest/mock"
-require "selise_sentry/test_helper"
+require "sentrifig/test_helper"
 require "stringio"
 
 ActiveRecord::Migration.verbose = false
 ActiveRecord::MigrationContext.new([File.expand_path("../db/migrate", __dir__)]).migrate
 
-module SeliseSentryTestSupport
+module SentrifigTestSupport
   DUMMY_DSN_FRAGMENTS = %w[12345 67890 sentry.localdomain].freeze
 
   def basic_auth(username = "admin", password = "secret")
@@ -27,8 +27,8 @@ module SeliseSentryTestSupport
     previous.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
   end
 
-  def configure_selise_sentry(**overrides)
-    SeliseSentry.configure do |config|
+  def configure_sentrifig(**overrides)
+    Sentrifig.configure do |config|
       config.username = overrides.fetch(:username, "admin")
       config.password = overrides.fetch(:password, "secret")
       config.cache_ttl = overrides.fetch(:cache_ttl, 0)
@@ -48,22 +48,22 @@ module SeliseSentryTestSupport
 end
 
 class ActiveSupport::TestCase
-  include SeliseSentry::TestHelper
-  include SeliseSentryTestSupport
+  include Sentrifig::TestHelper
+  include SentrifigTestSupport
 
   setup do
-    SeliseSentry::Setting.delete_all
-    SeliseSentry.reset!
-    configure_selise_sentry
-    setup_selise_sentry_test
+    Sentrifig::Setting.delete_all
+    Sentrifig.reset!
+    configure_sentrifig
+    setup_sentrifig_test
   end
 
   teardown do
-    teardown_selise_sentry_test
-    SeliseSentry.reset!
+    teardown_sentrifig_test
+    Sentrifig.reset!
   end
 end
 
 class ActionDispatch::IntegrationTest
-  include SeliseSentryTestSupport
+  include SentrifigTestSupport
 end

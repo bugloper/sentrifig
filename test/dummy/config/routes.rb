@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 Rails.application.routes.draw do
-  mount SeliseSentry::Engine => "/selise-sentry"
+  mount Sentrifig::Engine => "/sentrifig"
 
   get "/ok",      to: "demo#ok"
   get "/capture", to: "demo#capture"
