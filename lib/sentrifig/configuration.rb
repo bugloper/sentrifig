@@ -9,6 +9,7 @@ module Sentrifig
   #   end
   class Configuration
     DEFAULT_CACHE_TTL = 5 # seconds
+    DEFAULT_CLIENT_POLL_INTERVAL = 60 # seconds
     USERNAME_ENV = "SENTRIFIG_USERNAME"
     PASSWORD_ENV = "SENTRIFIG_PASSWORD"
 
@@ -48,6 +49,31 @@ module Sentrifig
     # the defaults, in registration order.
     attr_reader :sentry_overrides
 
+    # Authenticates browser requests to GET <mount>/state. Receives the
+    # ActionDispatch::Request and returns truthy to allow, falsey to refuse.
+    #
+    # The gem cannot know how the host authenticates its users (JWT, session,
+    # Doorkeeper), so the host supplies the check:
+    #
+    #   config.client_authenticator = ->(request) { MyAuth.user_from(request).present? }
+    #
+    # It receives the request rather than a controller on purpose: the host
+    # cannot call render, cannot depend on this gem's controller ancestry, and
+    # can unit-test the lambda with ActionDispatch::TestRequest.create. The cost
+    # is real -- there is no current_user or authenticate_user! helper, so a
+    # host whose auth is a before_action mixin must restate it at request level.
+    #
+    # Unset means no browser client can read the state: every request to that
+    # endpoint is refused with 401 and an error is logged. Fail closed, matching
+    # how missing Basic credentials are treated.
+    attr_reader :client_authenticator
+
+    # Seconds a browser client should wait between polls, published in the state
+    # response. Deliberately NOT cache_ttl: that is how long *this process*
+    # trusts its memory before one indexed query, and handing 5 seconds to every
+    # open browser tab would mean twelve requests a minute per tab, forever.
+    attr_reader :client_poll_interval
+
     def initialize
       @username = ENV.fetch(USERNAME_ENV, nil)
       @password = ENV.fetch(PASSWORD_ENV, nil)
@@ -57,6 +83,8 @@ module Sentrifig
       @logger = nil
       @initialize_sentry = true
       @sentry_overrides = []
+      @client_authenticator = nil
+      @client_poll_interval = DEFAULT_CLIENT_POLL_INTERVAL
     end
 
     def initialize_sentry=(value)
@@ -111,6 +139,32 @@ module Sentrifig
 
     def logger
       @logger || default_logger
+    end
+
+    def client_authenticator=(value)
+      unless value.nil? || value.respond_to?(:call)
+        raise ConfigurationError, "client_authenticator must respond to #call, got #{value.inspect}"
+      end
+
+      if value && value.respond_to?(:arity) && value.arity != 1 && !value.arity.negative?
+        raise ConfigurationError,
+              "client_authenticator must accept one argument (the request), got arity #{value.arity}"
+      end
+
+      @client_authenticator = value
+    end
+
+    def client_poll_interval=(value)
+      unless value.is_a?(Numeric) && value.positive?
+        raise ConfigurationError,
+              "client_poll_interval must be a positive number of seconds, got #{value.inspect}"
+      end
+
+      @client_poll_interval = value
+    end
+
+    def client_authenticator_configured?
+      !@client_authenticator.nil?
     end
 
     def credentials_configured?

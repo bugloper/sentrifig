@@ -1,0 +1,43 @@
+{
+  "name": "sentrifig-browser",
+  "version": "0.1.0",
+  "description": "Runtime on/off switch for the Sentry browser SDK, driven by a sentrifig state endpoint.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bugloper/sentrifig.git",
+    "directory": "clients/browser"
+  },
+  "keywords": [
+    "sentry",
+    "feature-flag",
+    "kill-switch",
+    "observability"
+  ],
+  "sideEffects": false,
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --target es2017 --clean",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1",
+    "tsup": "^8.3.5",
+    "typescript": "^5.4.5",
+    "vitest": "^2.1.8"
+  }
+}

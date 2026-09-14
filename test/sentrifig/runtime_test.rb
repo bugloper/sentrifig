@@ -17,23 +17,25 @@ module Sentrifig
         @failure = nil
       end
 
-      def set(environment, enabled:, changed_by: "other-process")
-        @rows[environment] = Store::Record.new(enabled: enabled, changed_by: changed_by, updated_at: Time.now)
+      # Keyed by [environment, scope], like the real table's unique index.
+      def set(environment, enabled:, scope: Scope::BACKEND, changed_by: "other-process")
+        @rows[[environment, scope]] =
+          Store::Record.new(enabled: enabled, changed_by: changed_by, updated_at: Time.now)
       end
 
-      def fetch(environment)
+      def fetch(environment, scope: Scope::BACKEND)
         @fetches += 1
         @block_on_fetch&.call
         raise @failure if @failure
 
-        @rows[environment]
+        @rows[[environment, scope]]
       end
 
-      def write(environment, enabled:, changed_by: nil)
+      def write(environment, enabled:, scope: Scope::BACKEND, changed_by: nil)
         @writes += 1
         raise @failure if @failure
 
-        set(environment, enabled: enabled, changed_by: changed_by)
+        set(environment, enabled: enabled, scope: scope, changed_by: changed_by)
       end
     end
 
@@ -71,7 +73,7 @@ module Sentrifig
       assert_not @runtime.enabled?
       assert_equal 1, @store.writes
       assert_equal false, @store.fetch("production").enabled
-      assert_includes @log.string, "[sentrifig] Sentry disabled environment=production by=alice"
+      assert_includes @log.string, "[sentrifig] Sentry disabled scope=backend environment=production by=alice"
     end
 
     test "the cached value is trusted until cache_ttl elapses" do
@@ -86,7 +88,7 @@ module Sentrifig
       @clock.advance(0.2)
       assert_not @runtime.enabled?, "fresh value after the TTL"
       assert_equal fetches_after_first + 1, @store.fetches
-      assert_includes @log.string, "Sentry disabled (picked up from database) environment=production by=other-process"
+      assert_includes @log.string, "Sentry disabled (picked up from database) scope=backend environment=production by=other-process"
     end
 
     test "hot path reads do not touch the store inside the TTL" do
@@ -125,7 +127,7 @@ module Sentrifig
 
       warnings = @log.string.scan(/could not read state/)
       assert_equal 1, warnings.size, "outage must be logged once, not on every retry"
-      assert_includes @log.string, "keeping Sentry disabled for environment=production, retrying in 5s"
+      assert_includes @log.string, "keeping Sentry disabled for scope=backend environment=production, retrying in 5s"
     end
 
     test "a store failure before anything was loaded falls back to the default" do
@@ -158,7 +160,7 @@ module Sentrifig
       @store.set("production", enabled: false)
       @clock.advance(6)
       assert_not @runtime.enabled?
-      assert_includes @log.string, "database reachable again; Sentry disabled environment=production"
+      assert_includes @log.string, "database reachable again; Sentry disabled scope=backend environment=production"
     end
 
     test "update! failure raises PersistenceError and leaves the state alone" do
@@ -168,7 +170,7 @@ module Sentrifig
       error = assert_raises(PersistenceError) { @runtime.update!(false, by: "alice") }
       assert_match(/ConnectionNotEstablished/, error.message)
       assert @runtime.enabled?
-      assert_includes @log.string, "could not persist Sentry disabled for environment=production"
+      assert_includes @log.string, "could not persist Sentry disabled for scope=backend environment=production"
     end
 
     test "update! resets the failure state so recovery is not logged twice" do
@@ -239,6 +241,39 @@ module Sentrifig
       @config.logger = Object.new # responds to nothing
       @store.set("production", enabled: false)
       assert_nothing_raised { @runtime.update!(true, by: "x") }
+    end
+
+    test "each scope refreshes independently over the same store" do
+      frontend = Runtime.new(configuration: @config, scope: Scope::FRONTEND, store: @store, clock: @clock)
+
+      @store.set("production", scope: Scope::BACKEND, enabled: false)
+      @store.set("production", scope: Scope::FRONTEND, enabled: true)
+
+      assert_not @runtime.enabled?
+      assert frontend.enabled?
+      assert_equal Scope::FRONTEND, frontend.scope
+      assert_equal Scope::FRONTEND, frontend.status.scope
+    end
+
+    test "a frontend outage does not put the backend runtime into the failing state" do
+      frontend = Runtime.new(configuration: @config, scope: Scope::FRONTEND, store: @store, clock: @clock)
+
+      assert @runtime.enabled?, "backend reads cleanly first"
+
+      @store.failure = ActiveRecord::ConnectionNotEstablished.new("db down")
+      @clock.advance(10)
+      frontend.enabled?
+
+      @store.failure = nil
+      @store.set("production", scope: Scope::BACKEND, enabled: false)
+      @clock.advance(10)
+
+      assert_not @runtime.enabled?
+      assert_not_includes @log.string, "database reachable again; Sentry disabled scope=backend"
+    end
+
+    test "an unknown scope is refused at construction" do
+      assert_raises(ArgumentError) { Runtime.new(configuration: @config, scope: "sideways", store: @store) }
     end
   end
 end

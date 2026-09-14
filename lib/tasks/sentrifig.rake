@@ -1,5 +1,17 @@
 # frozen_string_literal: true
 
+# Resolves a scope from a Rake bracket argument, falling back to SCOPE= because
+# bracket args need quoting under zsh, then to the backend switch.
+def sentrifig_scope(value)
+  Sentrifig::Scope.coerce(
+    (value.nil? || value.to_s.empty? ? nil : value) ||
+      (ENV["SCOPE"].nil? || ENV["SCOPE"].empty? ? nil : ENV["SCOPE"]) ||
+      Sentrifig::Scope::BACKEND
+  )
+rescue ArgumentError => e
+  abort("sentrifig: #{e.message}")
+end
+
 namespace :sentrifig do
   desc "Install sentrifig: copy its migration into db/migrate and print the remaining steps"
   task install: :environment do
@@ -41,45 +53,69 @@ namespace :sentrifig do
                config.password = ENV.fetch("SENTRIFIG_PASSWORD")
              end
 
+        4. To let browser clients read the frontend switch from
+           GET <mount>/state, add your application's own authentication check:
+
+             config.client_authenticator = ->(request) { MyAuth.user_from(request).present? }
+
+           Until it is set, that endpoint refuses every request with 401. The
+           Basic-auth dashboard is unaffected.
+
+      Upgrading from 0.1.0? `sentrifig:install` copies by filename and will NOT
+      replace a migration you already have. Delete
+      db/migrate/*_create_sentrifig_settings.sentrifig.rb (rolling it back
+      first), then re-run this task, or you will silently keep the old schema.
+
       Sentry stays ENABLED until you turn it off from /sentrifig or with
       `bin/rails sentrifig:disable`.
     STEPS
   end
 
-  desc "Show whether Sentry is enabled for the current environment"
+  desc "Show whether Sentry is enabled for the current environment (both scopes)"
   task status: :environment do
-    status = Sentrifig.status
-    puts "Environment: #{status.environment}"
-    puts "Sentry: #{status.label}"
-    puts "SDK: #{status.sdk_ready? ? 'ready to send' : "not sending (#{Array(status.sdk_problems).join('; ')})"}"
-    if status.persisted?
-      puts "Changed by: #{status.changed_by || 'unknown'} at #{status.changed_at}"
-    elsif status.degraded?
-      puts "Note: database unreachable, showing fallback state"
-    else
-      puts "Note: no stored setting yet, showing default"
+    statuses = Sentrifig.statuses
+    puts "Environment: #{statuses.first.environment}"
+
+    statuses.each do |status|
+      note =
+        if status.persisted?
+          "changed by #{status.changed_by || 'unknown'} at #{status.changed_at}"
+        elsif status.degraded?
+          "database unreachable, showing fallback state"
+        else
+          "no stored setting yet, showing default"
+        end
+
+      puts format("%-9s Sentry: %-8s (%s)", status.scope.capitalize, status.label, note)
     end
+
+    sdk = statuses.first
+    puts "SDK: #{sdk.sdk_ready? ? 'ready to send' : "not sending (#{Array(sdk.sdk_problems).join('; ')})"}"
   end
 
-  desc "Enable Sentry for the current environment"
-  task enable: :environment do
-    Sentrifig.enable!(by: "rake")
+  desc "Enable Sentry for the current environment (scope: backend [default] or frontend)"
+  task :enable, [:scope] => :environment do |_task, args|
+    scope = sentrifig_scope(args[:scope])
+    Sentrifig.enable!(by: "rake", scope: scope)
     puts "Environment: #{Sentrifig.current_environment}"
-    puts "Sentry: ENABLED"
+    puts "#{scope.capitalize} Sentry: ENABLED"
   end
 
-  desc "Disable Sentry for the current environment"
-  task disable: :environment do
-    Sentrifig.disable!(by: "rake")
+  desc "Disable Sentry for the current environment (scope: backend [default] or frontend)"
+  task :disable, [:scope] => :environment do |_task, args|
+    scope = sentrifig_scope(args[:scope])
+    Sentrifig.disable!(by: "rake", scope: scope)
     puts "Environment: #{Sentrifig.current_environment}"
-    puts "Sentry: DISABLED"
+    puts "#{scope.capitalize} Sentry: DISABLED"
   end
 
   desc "Capture a test event and report whether the runtime switch and the Sentry SDK let it through"
   task test_event: :environment do
     status = Sentrifig.status
+    frontend = Sentrifig.status(Sentrifig::Scope::FRONTEND)
     puts "Environment: #{status.environment}"
-    puts "Sentry switch: #{status.label}"
+    puts "Backend Sentry switch: #{status.label}"
+    puts "Frontend switch: #{frontend.label} (browser only; does not affect Ruby events)"
 
     unless status.sdk_ready?
       puts "Sentry SDK cannot send from this process: #{Array(status.sdk_problems).join('; ')}"

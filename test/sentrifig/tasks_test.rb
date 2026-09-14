@@ -11,16 +11,20 @@ module Sentrifig
       load File.expand_path("../../lib/tasks/sentrifig.rake", __dir__)
     end
 
-    def run_task(name)
+    # Captures stderr as well as stdout: `abort` writes its message to stderr.
+    def run_task(name, *args)
       out = StringIO.new
+      err = StringIO.new
       $stdout = out
+      $stderr = err
       Rake::Task[name].reenable
-      Rake::Task[name].invoke
-      out.string
+      Rake::Task[name].invoke(*args)
+      out.string + err.string
     rescue SystemExit => e
-      out.string + "[exit #{e.status}]"
+      out.string + err.string + "[exit #{e.status}]"
     ensure
       $stdout = STDOUT
+      $stderr = STDERR
     end
 
     test "status shows the default state and SDK readiness" do
@@ -64,11 +68,11 @@ module Sentrifig
       output = run_task("sentrifig:disable")
       assert_includes output, "Sentry: DISABLED"
       assert_not Sentrifig.enabled?
-      assert_equal "rake", Setting.find_by!(environment: "test").changed_by
+      assert_equal "rake", Setting.find_by!(environment: "test", scope: Scope::BACKEND).changed_by
 
       output = run_task("sentrifig:status")
       assert_includes output, "Sentry: DISABLED"
-      assert_includes output, "Changed by: rake"
+      assert_match(/Backend\s+Sentry: DISABLED \(changed by rake/, output)
 
       run_task("sentrifig:enable")
       assert Sentrifig.enabled?
@@ -92,6 +96,42 @@ module Sentrifig
           assert_equal 1, Dir[File.join(dir, "*.rb")].size, "installer must be idempotent"
         end
       end
+    end
+
+    test "status prints both scopes" do
+      Sentrifig.disable!(by: "rake", scope: Scope::FRONTEND)
+
+      output = run_task("sentrifig:status")
+
+      assert_match(/Backend\s+Sentry: ENABLED/, output)
+      assert_match(/Frontend\s+Sentry: DISABLED \(changed by rake/, output)
+    end
+
+    test "enable and disable take a scope argument, defaulting to backend" do
+      run_task("sentrifig:disable", "frontend")
+
+      assert Sentrifig.enabled?, "the backend switch must be untouched"
+      assert_not Sentrifig.enabled_for?(Scope::FRONTEND)
+
+      run_task("sentrifig:enable", "frontend")
+      assert Sentrifig.enabled_for?(Scope::FRONTEND)
+    end
+
+    test "SCOPE= is honoured when no bracket argument is given" do
+      with_env("SCOPE" => "frontend") do
+        run_task("sentrifig:disable")
+      end
+
+      assert Sentrifig.enabled?
+      assert_not Sentrifig.enabled_for?(Scope::FRONTEND)
+    end
+
+    test "an unknown scope aborts rather than writing a bogus row" do
+      output = run_task("sentrifig:disable", "sideways")
+
+      assert_includes output, "unknown sentrifig scope"
+      assert Sentrifig.enabled?
+      assert_equal 0, Setting.count
     end
   end
 end
