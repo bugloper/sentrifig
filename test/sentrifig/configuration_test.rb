@@ -96,5 +96,46 @@ module Sentrifig
 
       assert_raises(ConfigurationError) { Sentrifig.configure { |c| c.cache_ttl = -1 } }
     end
+
+    test "client_authenticator accepts a lambda, any callable, or nil" do
+      config = Configuration.new
+      assert_nil config.client_authenticator
+      assert_not config.client_authenticator_configured?
+
+      callable = Class.new { def call(_request) = true }.new
+      config.client_authenticator = callable
+      assert_equal callable, config.client_authenticator
+      assert config.client_authenticator_configured?
+
+      config.client_authenticator = ->(_request) { true }
+      config.client_authenticator = nil
+      assert_nil config.client_authenticator
+    end
+
+    test "client_authenticator rejects non-callables and the wrong arity" do
+      config = Configuration.new
+
+      assert_raises(ConfigurationError) { config.client_authenticator = "nope" }
+      assert_raises(ConfigurationError) { config.client_authenticator = ->(_a, _b) { true } }
+    end
+
+    test "client_poll_interval defaults to 60 and must be positive" do
+      config = Configuration.new
+      assert_equal 60, config.client_poll_interval
+
+      config.client_poll_interval = 120
+      assert_equal 120, config.client_poll_interval
+
+      assert_raises(ConfigurationError) { config.client_poll_interval = 0 }
+      assert_raises(ConfigurationError) { config.client_poll_interval = -1 }
+      assert_raises(ConfigurationError) { config.client_poll_interval = "60" }
+    end
+
+    test "validate! passes with no client_authenticator set" do
+      config = Configuration.new
+      config.environment = "production"
+
+      assert config.validate!
+    end
   end
 end

@@ -2,7 +2,15 @@
 
 module Sentrifig
   # Data-plane state holder. Owns the single in-memory copy of "is Sentry
-  # enabled for this environment" that the Sentry gate consults on every event.
+  # enabled for this environment and scope" that the Sentry gate consults on
+  # every event.
+  #
+  # One instance per scope, not one instance holding a per-scope map: the hot
+  # path below is one ivar read and one clock comparison, and a map would turn
+  # every one of @snapshot/@next_refresh_at/@lock into a hash lookup. It would
+  # also force a choice between one mutex serialising both scopes' database
+  # reads -- where a frontend refresh blocks a backend refresh's try_lock and
+  # the backend silently serves stale state -- and a hash of mutexes.
   #
   # Hot path (#enabled?): one instance-variable read plus a monotonic clock
   # comparison. At most once per cache_ttl seconds (per process) a single
@@ -18,7 +26,7 @@ module Sentrifig
   class Runtime
     Snapshot = Struct.new(:enabled, :source, :changed_by, :changed_at, keyword_init: true)
 
-    Status = Struct.new(:enabled, :environment, :source, :changed_by, :changed_at, :cache_ttl,
+    Status = Struct.new(:enabled, :environment, :scope, :source, :changed_by, :changed_at, :cache_ttl,
                         :sdk_ready, :sdk_problems, keyword_init: true) do
       def enabled? = enabled == true
       # True when Sentry's own configuration allows sending (valid DSN, enabled environment).
@@ -32,8 +40,11 @@ module Sentrifig
 
     MONOTONIC_CLOCK = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
 
-    def initialize(configuration:, store: Store.new, clock: MONOTONIC_CLOCK)
+    attr_reader :scope
+
+    def initialize(configuration:, scope: Scope::BACKEND, store: Store.new, clock: MONOTONIC_CLOCK)
       @configuration = configuration
+      @scope = Scope.coerce(scope)
       @store = store
       @clock = clock
       @lock = Mutex.new
@@ -55,15 +66,16 @@ module Sentrifig
     # Persists the new state, applies it to this process immediately, logs.
     # @raise [PersistenceError]
     def update!(enabled, by: nil)
-      record = @store.write(environment, enabled: enabled, changed_by: by)
+      record = @store.write(environment, scope: @scope, enabled: enabled, changed_by: by)
       @lock.synchronize do
         @failing = false
         install_snapshot(snapshot_from(record))
       end
-      log(:info, "Sentry #{word(enabled)} environment=#{environment} by=#{by || 'unknown'}")
+      log(:info, "Sentry #{word(enabled)} scope=#{@scope} environment=#{environment} by=#{by || 'unknown'}")
       enabled
     rescue StandardError => e
-      log(:error, "could not persist Sentry #{word(enabled)} for environment=#{environment}: #{e.class}: #{e.message}")
+      log(:error, "could not persist Sentry #{word(enabled)} for scope=#{@scope} environment=#{environment}: " \
+                  "#{e.class}: #{e.message}")
       raise PersistenceError, "could not persist sentrifig state: #{e.class}: #{e.message}"
     end
 
@@ -79,6 +91,7 @@ module Sentrifig
       Status.new(
         enabled: snapshot.enabled,
         environment: environment,
+        scope: @scope,
         source: snapshot.source,
         changed_by: snapshot.changed_by,
         changed_at: snapshot.changed_at,
@@ -114,14 +127,15 @@ module Sentrifig
 
     # Caller must hold @lock.
     def load_from_store
-      record = @store.fetch(environment)
+      record = @store.fetch(environment, scope: @scope)
       fresh = record ? snapshot_from(record) : default_snapshot(:default)
 
       if @failing
         @failing = false
-        log(:info, "database reachable again; Sentry #{word(fresh.enabled)} environment=#{environment}")
+        log(:info, "database reachable again; Sentry #{word(fresh.enabled)} scope=#{@scope} environment=#{environment}")
       elsif @snapshot && @snapshot.enabled != fresh.enabled
-        log(:info, "Sentry #{word(fresh.enabled)} (picked up from database) environment=#{environment} by=#{fresh.changed_by || 'unknown'}")
+        log(:info, "Sentry #{word(fresh.enabled)} (picked up from database) scope=#{@scope} " \
+                   "environment=#{environment} by=#{fresh.changed_by || 'unknown'}")
       end
 
       install_snapshot(fresh)
@@ -131,7 +145,7 @@ module Sentrifig
       unless @failing
         @failing = true
         log(:warn, "could not read state (#{e.class}: #{e.message}); keeping Sentry #{word(fallback.enabled)} " \
-                   "for environment=#{environment}, retrying in #{@configuration.cache_ttl}s")
+                   "for scope=#{@scope} environment=#{environment}, retrying in #{@configuration.cache_ttl}s")
       end
 
       install_snapshot(fallback)

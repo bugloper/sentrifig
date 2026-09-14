@@ -63,10 +63,10 @@ module Sentrifig
       assert_select "h1", "Sentrifig"
       assert_select ".env", "test"
       assert_select ".status.enabled", text: "ENABLED"
-      assert_select "form[action=?][method=post]", "/sentrifig/disable" do
-        assert_select "button", "Disable Sentry"
+      assert_select "form[action=?][method=post]", "/sentrifig/backend/disable" do
+        assert_select "button", "Disable backend Sentry"
       end
-      assert_select "form[action=?]", "/sentrifig/enable", count: 0
+      assert_select "form[action=?]", "/sentrifig/backend/enable", count: 0
       assert_equal "no-store", response.headers["Cache-Control"]
       assert_match(/SDK is configured to send/, response.body)
     end
@@ -74,14 +74,15 @@ module Sentrifig
     test "dashboard says when the SDK itself cannot send" do
       Sentry.configuration.dsn = nil
       get "/sentrifig", headers: basic_auth
-      assert_match(/Not sending from this deployment regardless of the switch:\s*DSN not set or not valid/, response.body)
+      assert_match(/Not sending from this deployment regardless of the backend switch:\s*DSN not set or not valid/,
+                   response.body)
     end
 
     test "dashboard shows DISABLED status and the enable button" do
       Sentrifig.disable!(by: "alice")
       get "/sentrifig", headers: basic_auth
       assert_select ".status.disabled", text: "DISABLED"
-      assert_select "form[action=?]", "/sentrifig/enable"
+      assert_select "form[action=?]", "/sentrifig/backend/enable"
       assert_match(/by alice/, response.body)
     end
 
@@ -159,10 +160,12 @@ module Sentrifig
 
         get "/sentrifig", headers: basic_auth
         assert_response :success
-        token = css_select("form[action='/sentrifig/disable'] input[name=authenticity_token]").first["value"]
+        token = css_select("form[action='/sentrifig/backend/disable'] input[name=authenticity_token]").first["value"]
         assert token.present?
 
-        post "/sentrifig/disable", headers: basic_auth, params: { authenticity_token: token }
+        # Rails issues per-form CSRF tokens, so the POST must go to the action
+        # the form was rendered for.
+        post "/sentrifig/backend/disable", headers: basic_auth, params: { authenticity_token: token }
         assert_redirected_to "/sentrifig/"
         assert_not Sentrifig.enabled?
       end

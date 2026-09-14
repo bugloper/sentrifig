@@ -7,6 +7,12 @@ Sentrifig.configure do |config|
   config.password ||= "secret"
   config.cache_ttl = Rails.env.test? ? 0 : 5
 
+  # Browser clients: a real app checks its own session or token here. The demo
+  # accepts any request outside the test environment so `GET /sentrifig/state`
+  # can be tried with curl; the test suite leaves it unset on purpose, so tests
+  # see the fail-closed path a host gets when it forgets this.
+  config.client_authenticator = ->(_request) { true } unless Rails.env.test?
+
   # The gem calls Sentry.init with the Selise defaults (Sentrifig::SentrySetup).
   # The demo app records events in-process (DummyTransport) unless SENTRY_DSN is set.
   config.sentry do |sentry|

@@ -1,43 +1,17 @@
+<p class="env-line">Environment: <span class="env"><%= Sentrifig.current_environment %></span></p>
+
+<%= render partial: "switch", collection: @statuses, as: :status %>
+
 <div class="card">
-  <p>Environment: <span class="env"><%= @status.environment %></span></p>
-
-  <h2>Sentry Status</h2>
-  <div class="status <%= @status.enabled? ? 'enabled' : 'disabled' %>">
-    <%= @status.label %>
-  </div>
-
+  <h2>Sentry SDK (this process)</h2>
   <p class="meta">
-    <% if @status.persisted? %>
-      Last changed
-      <% if @status.changed_at %>at <time datetime="<%= @status.changed_at.iso8601 %>"><%= @status.changed_at.utc.strftime("%Y-%m-%d %H:%M:%S UTC") %></time><% end %>
-      by <%= @status.changed_by.presence || "unknown" %>.
-    <% elsif @status.degraded? %>
-      The database is currently unreachable. Showing the last known state; changes cannot be saved right now.
-    <% else %>
-      No setting stored yet. Showing the default.
-    <% end %>
-  </p>
-
-  <h2>Sentry SDK</h2>
-  <p class="meta">
-    <% if @status.sdk_ready? %>
+    <% sdk = @statuses.first %>
+    <% if sdk.sdk_ready? %>
       Ready: the SDK is configured to send from this deployment.
     <% else %>
-      Not sending from this deployment regardless of the switch:
-      <%= Array(@status.sdk_problems).join("; ") %>.
+      Not sending from this deployment regardless of the backend switch:
+      <%= Array(sdk.sdk_problems).join("; ") %>.
     <% end %>
-  </p>
-
-  <div class="actions">
-    <% if @status.enabled? %>
-      <%= button_to "Disable Sentry", disable_path, method: :post, class: "btn danger" %>
-    <% else %>
-      <%= button_to "Enable Sentry", enable_path, method: :post, class: "btn primary" %>
-    <% end %>
-  </div>
-
-  <p class="meta">
-    Changes apply immediately to this process and to every other process of this environment within
-    <%= @status.cache_ttl %> seconds.
+    The frontend switch is unaffected by this &mdash; it gates browser SDKs, which have their own DSN.
   </p>
 </div>

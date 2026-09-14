@@ -25,14 +25,14 @@ module Sentrifig
 
     # @yieldparam config [Sentry::Configuration] the dummy configuration, as in setup_sentry_test
     def setup_sentrifig_test(&block)
-      Sentrifig.runtime.reset!
+      Sentrifig.runtimes.each_value(&:reset!)
       setup_sentry_test(&block)
       Sentrifig.install!
     end
 
     def teardown_sentrifig_test
       teardown_sentry_test
-      Sentrifig.runtime.reset!
+      Sentrifig.runtimes.each_value(&:reset!)
     end
 
     # Error/message events only; requests also produce TransactionEvents when tracing is on.
@@ -49,6 +49,17 @@ module Sentrifig
       yield
     ensure
       config.username, config.password = previous
+    end
+
+    # Installs a client authenticator for the block, so tests can reach the
+    # browser state endpoint. Defaults to allowing every request.
+    def with_sentrifig_client_authenticator(callable = ->(_request) { true })
+      config = Sentrifig.configuration
+      previous = config.client_authenticator
+      config.client_authenticator = callable
+      yield
+    ensure
+      config.client_authenticator = previous
     end
 
     # Headers for an authenticated request to the mounted UI.

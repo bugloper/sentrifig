@@ -40,18 +40,19 @@ Sentry Status
 6. [Mounting the engine](#mounting-the-engine)
 7. [Authentication](#authentication)
 8. [Enabling and disabling Sentry](#enabling-and-disabling-sentry)
-9. [Runtime behaviour: what "disabled" means](#runtime-behaviour-what-disabled-means)
-10. [Default behaviour](#default-behaviour)
-11. [Multi-process behaviour and caching](#multi-process-behaviour-and-caching)
-12. [Failure behaviour](#failure-behaviour)
-13. [Security](#security)
-14. [Rake tasks](#rake-tasks)
-15. [Logging and audit](#logging-and-audit)
-16. [Testing](#testing)
-17. [Production deployment](#production-deployment)
-18. [Troubleshooting](#troubleshooting)
-19. [Architecture overview](#architecture-overview)
-20. [Known limitations](#known-limitations)
+9. [Browser clients (the frontend switch)](#browser-clients-the-frontend-switch)
+10. [Runtime behaviour: what "disabled" means](#runtime-behaviour-what-disabled-means)
+11. [Default behaviour](#default-behaviour)
+12. [Multi-process behaviour and caching](#multi-process-behaviour-and-caching)
+13. [Failure behaviour](#failure-behaviour)
+14. [Security](#security)
+15. [Rake tasks](#rake-tasks)
+16. [Logging and audit](#logging-and-audit)
+17. [Testing](#testing)
+18. [Production deployment](#production-deployment)
+19. [Troubleshooting](#troubleshooting)
+20. [Architecture overview](#architecture-overview)
+21. [Known limitations](#known-limitations)
 
 ## Why it exists
 
@@ -121,6 +122,10 @@ Sentrifig.configure do |config|
   # config.logger = Rails.logger
   # config.initialize_sentry = true      # false keeps your own Sentry.init
 
+  # Browser clients: who may read GET <mount>/state. Unset = nobody.
+  # config.client_authenticator = ->(request) { MyAuth.user_from(request).present? }
+  # config.client_poll_interval = 60     # seconds, published to those clients
+
   # Application-specific Sentry settings, applied on top of the defaults:
   config.sentry do |sentry|
     sentry.excluded_exceptions += ["MyApp::ExpectedError"]
@@ -136,12 +141,16 @@ end
 | `environment` | the environment Sentry reports (`Sentry.configuration.environment`, so `RUNTIME_ENVIRONMENT` with the defaults), `Rails.env` before Sentry is initialised | Row key and the name shown in the UI. Staging and production are told apart even when both run with `Rails.env == "production"`. |
 | `logger` | `Rails.logger` | Where `[sentrifig]` lines go. |
 | `initialize_sentry` | `true` | Whether the gem calls `Sentry.init` with the [Sentry defaults](#sentry-defaults). |
+| `client_authenticator` | `nil` | Callable taking an `ActionDispatch::Request`, deciding who may read `GET <mount>/state`. Unset means every such request is refused with 401. See [Browser clients](#browser-clients-the-frontend-switch). |
+| `client_poll_interval` | `60` | Seconds, published in the state response so browsers know how often to ask. Deliberately not `cache_ttl`. |
 | `sentry { \|sentry\| ... }` | none | Registers a block run against the `Sentry::Configuration` after the defaults. May be called several times; blocks run in order. |
 
 `configure` validates types (`cache_ttl` must be a non-negative number,
 `enabled_by_default` a boolean, `environment` non-blank) and raises
-`Sentrifig::ConfigurationError` otherwise. Missing credentials are
-deliberately *not* a boot error.
+`Sentrifig::ConfigurationError` otherwise. Missing credentials, and a missing
+`client_authenticator`, are deliberately *not* boot errors: the application must
+keep booting and keep reporting even when a control-plane surface is
+misconfigured. Those surfaces refuse instead.
 
 ## Sentry defaults
 
@@ -202,14 +211,19 @@ end
 ```ruby
 create_table :sentrifig_settings do |t|
   t.string  :environment, null: false
+  t.string  :scope,       null: false, default: "backend"
   t.boolean :enabled,     null: false, default: true
   t.string  :changed_by
   t.timestamps
 end
-add_index :sentrifig_settings, :environment, unique: true
+add_index :sentrifig_settings, %i[environment scope], unique: true
 ```
 
-One row per environment, enforced by the unique index. The migration is
+One row per environment **and scope**, enforced by the unique index. The two
+scopes are `backend` (this application's Ruby SDK, gated by the event
+processor) and `frontend` (browser SDKs, which read their state over HTTP --
+see [Browser clients](#browser-clients-the-frontend-switch)). They move
+independently: silencing a noisy browser does not stop server-side reporting. The migration is
 additive only (no destructive operations) and uses the Rails 7.1 migration API
 so it runs unchanged on any supported Rails version. The equivalent Rails
 built-in, `bin/rails sentrifig:install:migrations`, also works.
@@ -238,6 +252,11 @@ The engine is namespace-isolated: its controllers inherit from
 `ActionController::Base` directly, so your application's `before_action`s,
 Devise filters, or layouts do not apply to it. It renders plain HTML and CSS;
 there is no JavaScript.
+
+The one exception to "Basic Auth on everything" is `GET <mount>/state`, the
+read-only JSON endpoint browsers call. It has its own controller hierarchy and
+its own authentication -- see
+[Browser clients](#browser-clients-the-frontend-switch).
 
 ## Authentication
 
@@ -271,8 +290,9 @@ Guidelines:
 Three interfaces, one source of truth. All of them write the same row and
 update the in-process cache immediately.
 
-**Web UI**: click *Disable Sentry* / *Enable Sentry*. Both are `POST` forms
-with a CSRF token. The operator's Basic Auth username is recorded as
+**Web UI**: the dashboard shows one card per scope. Click *Disable backend
+Sentry* / *Disable frontend Sentry* (and the matching enables). All are `POST`
+forms with a CSRF token. The operator's Basic Auth username is recorded as
 `changed_by`.
 
 **Rake tasks**:
@@ -280,32 +300,152 @@ with a CSRF token. The operator's Basic Auth username is recorded as
 ```bash
 $ bin/rails sentrifig:status
 Environment: production
-Sentry: ENABLED
-Note: no stored setting yet, showing default
+Backend   Sentry: ENABLED  (no stored setting yet, showing default)
+Frontend  Sentry: ENABLED  (no stored setting yet, showing default)
+SDK: ready to send
 
 $ bin/rails sentrifig:disable
 Environment: production
-Sentry: DISABLED
+Backend Sentry: DISABLED
+
+$ bin/rails "sentrifig:disable[frontend]"     # or: SCOPE=frontend bin/rails sentrifig:disable
+Environment: production
+Frontend Sentry: DISABLED
 
 $ bin/rails sentrifig:enable
 Environment: production
-Sentry: ENABLED
+Backend Sentry: ENABLED
 ```
+
+The bracket form needs quoting under zsh, which is why `SCOPE=` is accepted
+too. With no scope, every task acts on the backend switch, exactly as before.
 
 **Ruby API**:
 
 ```ruby
-Sentrifig.enabled?              # => true    (hot path, in-memory)
+Sentrifig.enabled?              # => true    (hot path, in-memory, backend scope)
 Sentrifig.disable!(by: "alice") # persists, applies now, logs, returns false
 Sentrifig.enable!(by: "alice")  # => true
-Sentrifig.status                # => Status(enabled:, environment:, source:, changed_by:, changed_at:, cache_ttl:)
+Sentrifig.status                # => Status(enabled:, environment:, scope:, source:, changed_by:, changed_at:, cache_ttl:)
 Sentrifig.status.label          # => "ENABLED" / "DISABLED"
 Sentrifig.current_environment   # => "production"
 Sentrifig.refresh!              # re-read the database now instead of waiting for cache_ttl
+
+# The frontend switch
+Sentrifig.enabled_for?("frontend")          # => true
+Sentrifig.disable!(by: "alice", scope: "frontend")
+Sentrifig.status("frontend")
+Sentrifig.statuses                          # => [backend status, frontend status]
 ```
+
+`Sentrifig.enabled?` is deliberately backend-only and argument-free: it is what
+the event processor calls on every Sentry event, and it stays one instance
+variable read plus a clock comparison. An unknown scope raises `ArgumentError`
+rather than quietly falling back to the backend.
 
 `enable!`/`disable!` raise `Sentrifig::PersistenceError` (with `#cause`) if
 the row cannot be written; the previous state stays in effect.
+
+## Browser clients (the frontend switch)
+
+The `frontend` scope is not read by this process at all. It is published over
+HTTP so browser SDKs can gate themselves, which is what
+[`sentrifig-browser`](clients/browser/README.md) does.
+
+### The endpoint
+
+```
+GET <mount>/state
+
+200 application/json
+Cache-Control: no-store
+
+{
+  "enabled": true,
+  "scope": "frontend",
+  "environment": "production",
+  "source": "database",
+  "poll_interval": 60
+}
+```
+
+- `source` is `database`, `default` (nothing stored yet) or `fallback` (the
+  database is unreachable and this value is stale). It is a three-valued string
+  rather than a boolean precisely so a client can tell those apart.
+- `poll_interval` is `config.client_poll_interval`, **not** `cache_ttl`.
+  `cache_ttl` (5s) is how long *this process* trusts its own memory before one
+  indexed query; handing that to every open browser tab would mean twelve
+  requests a minute per tab, forever. It is served by the backend so you can
+  slow every client down without shipping frontend code.
+- A database outage is **not** a 5xx. The read degrades exactly as the hot path
+  does, so the response is a 200 marked `"source": "fallback"`.
+- Only `GET` is routed; anything else is a 404.
+
+**What it deliberately does not contain**: `changed_by`, `changed_at`,
+`sdk_ready` and `sdk_problems`. `changed_by` is the operator's Basic Auth
+*username*, and this endpoint is readable by every logged-in user of your
+application — publishing it would hand all of them half of a static credential
+pair guarding a dashboard with no lockout, no rotation and no MFA. The
+controller renders an explicit hash rather than serialising the status object,
+so a future field cannot leak in by accident.
+
+### Authentication
+
+The endpoint is **not** behind the operator Basic credentials: a browser cannot
+hold them, and they guard a far more privileged surface. It is also not public.
+Instead the host application supplies the check:
+
+```ruby
+# config/initializers/sentrifig.rb
+Sentrifig.configure do |config|
+  config.client_authenticator = ->(request) { MyAuth.user_from(request).present? }
+end
+```
+
+The callable receives an `ActionDispatch::Request` and returns truthy to allow.
+A request, not a controller, so your check cannot call `render`, does not depend
+on this gem's controller ancestry, and can be unit-tested with
+`ActionDispatch::TestRequest.create`. The cost is real and worth stating: there
+is no `current_user` or `authenticate_user!` helper here, so an app whose
+authentication is a `before_action` mixin has to restate it at request level.
+
+**Unset means every request is refused with 401** and an error is logged. That
+is the same doctrine as missing Basic credentials: the application keeps booting
+and keeps reporting to Sentry even when a control-plane surface is
+misconfigured. An authenticator that *raises* is also a 401, never a 500 — a
+broken hook must not become an event storm from the very endpoint that gates
+Sentry.
+
+Because the client treats an unreachable endpoint as "keep sending", the
+failure direction is always: forget to configure this, and browser Sentry stays
+**on** and noisy. Never silently off.
+
+Note that a 401 from this endpoint carries **no** `WWW-Authenticate` header. A
+challenge header on an XHR the user never initiated makes the browser pop its
+native Basic-auth dialog.
+
+### Wiring a browser app
+
+```ts
+import * as Sentry from '@sentry/browser';
+import { createSentrifig, installGate } from 'sentrifig-browser';
+
+Sentry.init({ dsn: '…' });
+
+installGate(Sentry, createSentrifig({
+  url: '/sentrifig/state',
+  getToken: () => localStorage.getItem('authToken'),
+}));
+```
+
+The browser SDK starts **enabled** and applies the real state when it arrives,
+so errors during boot, login, and for logged-out users are always captured. The
+trade-off is deliberate and worth knowing: an operator who has disabled the
+frontend switch will still see pre-login noise.
+
+If the SPA and this application are served from the same origin, a
+root-relative URL is all you need. If not, the endpoint must be reachable
+cross-origin with credentials — this gem ships no CORS handling of its own.
 
 ## Runtime behaviour: what "disabled" means
 
@@ -684,9 +824,11 @@ db/migrate/                     the single migration
   `nil` when disabled. No monkey-patching, no change to `Sentry.configuration`.
 - **State**: one row per environment in the app's database; no row = enabled.
 - **Cache**: per-process immutable snapshot refreshed at most once per
-  `cache_ttl` by a single non-blocking reader. Measured hot path: about 400 ns
-  per `enabled?` call, about 500 ns per gate invocation, zero allocations on the
-  cached path.
+  `cache_ttl` by a single non-blocking reader. Measured hot path: roughly 270 ns
+  per `enabled?` call and 330 ns per gate invocation on Ruby 4.0 (about 400/500
+  ns on Ruby 3.4), with effectively zero allocations on the cached path. The
+  backend runtime is held in a dedicated instance variable, so adding the
+  frontend scope cost the hot path nothing.
 - **Propagation**: immediate locally, within `cache_ttl` elsewhere.
 - **Failure**: fail open to the last known or default state, log once, retry
   after `cache_ttl`.
@@ -714,8 +856,16 @@ db/migrate/                     the single migration
   makes re-enabling instantaneous, but it means "disabled" is not "uninstalled".
 - **Propagation is eventually consistent** (bounded by `cache_ttl`), not
   instantaneous across processes.
-- **The switch is per environment, not per process or per host.** All processes
-  of one environment share one state.
+- **The switch is per environment and scope, not per process or per host.** All
+  processes of one environment share one backend state, and all browser clients
+  of one environment share one frontend state. There is no per-client scope: the
+  set is deliberately closed at `backend` and `frontend`.
+- **The browser switch is not instantaneous either.** Clients pick it up within
+  `client_poll_interval`, and only when they next have an event to send.
+- **Browser clients start enabled.** Until a client has read the state it sends,
+  so errors during boot, login and for logged-out users ignore the frontend
+  switch. That is what guarantees an error is never lost to a switch the client
+  could not read.
 - **`Sentry.init` timing.** With `initialize_sentry` (the default) Sentry is
   initialised after the application's `config/initializers` rather than inside
   them. Code in an initializer that calls `Sentry.*` at load time will find the

@@ -35,6 +35,10 @@ module SentrifigTestSupport
       config.enabled_by_default = overrides[:enabled_by_default] if overrides.key?(:enabled_by_default)
       config.environment = overrides[:environment] if overrides.key?(:environment)
       config.logger = overrides[:logger] if overrides.key?(:logger)
+      # Deliberately nil unless asked for: an unprepared test should see the
+      # fail-closed path the state endpoint takes when a host forgets the hook.
+      config.client_authenticator = overrides[:client_authenticator] if overrides.key?(:client_authenticator)
+      config.client_poll_interval = overrides[:client_poll_interval] if overrides.key?(:client_poll_interval)
     end
   end
 

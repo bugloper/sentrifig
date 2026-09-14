@@ -82,5 +82,32 @@ module Sentrifig
       assert_not Setting.new(environment: "", enabled: true).valid?
       assert_not Setting.new(environment: "x", enabled: nil).valid?
     end
+
+    test "the two scopes are independent rows in one environment" do
+      @store.write("production", scope: Scope::BACKEND, enabled: false, changed_by: "alice")
+      @store.write("production", scope: Scope::FRONTEND, enabled: true, changed_by: "bob")
+
+      assert_equal 2, Setting.where(environment: "production").count
+      assert_equal false, @store.fetch("production", scope: Scope::BACKEND).enabled
+      assert_equal true, @store.fetch("production", scope: Scope::FRONTEND).enabled
+    end
+
+    test "fetch and write default to the backend scope" do
+      @store.write("production", enabled: false, changed_by: "alice")
+
+      assert_equal Scope::BACKEND, Setting.find_by!(environment: "production").scope
+      assert_equal false, @store.fetch("production").enabled
+      assert_nil @store.fetch("production", scope: Scope::FRONTEND)
+    end
+
+    test "the unique index is on the pair, not on environment alone" do
+      Setting.create!(environment: "production", scope: Scope::BACKEND, enabled: true)
+      Setting.create!(environment: "production", scope: Scope::FRONTEND, enabled: true)
+
+      assert_raises(ActiveRecord::RecordNotUnique) do
+        Setting.insert_all!([{ environment: "production", scope: Scope::FRONTEND, enabled: false,
+                               created_at: Time.now, updated_at: Time.now }])
+      end
+    end
   end
 end

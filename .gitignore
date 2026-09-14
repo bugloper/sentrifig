@@ -10,3 +10,8 @@
 Gemfile.lock
 /test/dummy/db/migrate/*.sentrifig.rb
 /test/dummy/db/schema.rb
+
+# npm client
+clients/browser/node_modules/
+clients/browser/dist/
+clients/browser/package-lock.json

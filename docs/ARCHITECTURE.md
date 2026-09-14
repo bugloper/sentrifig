@@ -81,8 +81,9 @@ The test suite repeats these checks through the real Rails middleware.
 
 ### 3.1 Key
 
-State is keyed by **environment**, defaulting to `Rails.env`, overridable via
-`config.environment`. Options considered:
+State is keyed by **(environment, scope)**. The environment defaults to
+`Rails.env`, overridable via `config.environment`. Options considered for the
+environment half:
 
 - *Global (one flag)*: wrong when development and test share a database
   server, and not self-describing.
@@ -97,12 +98,23 @@ State is keyed by **environment**, defaulting to `Rails.env`, overridable via
 `SENTRY_ENVIRONMENT=staging`) *and* both share one database. Without a shared
 database the default is always right.
 
+The **scope** half is a closed set of two: `backend` (this process's Ruby SDK,
+gated by `Gate::PROCESSOR`) and `frontend` (browser SDKs, which read it over
+HTTP). They are separate rows so a noisy browser can be silenced without
+stopping server-side reporting — empirically the common case.
+
+A free-form per-client scope (`psp-fe`, `amp-fe`, …) was rejected: it makes the
+table unbounded, makes the dashboard unreviewable, and offers no way to tell a
+new client from a typo. Two values cover the actual requirement, and widening a
+closed set later is a migration, not a redesign.
+
 ### 3.2 Schema
 
 ```text
 sentrifig_settings
   id
-  environment   string  not null, unique index
+  environment   string  not null  }- unique index on the pair
+  scope         string  not null, default "backend"
   enabled       boolean not null, default true
   changed_by    string  (Basic Auth username, "rake", or caller-supplied)
   created_at / updated_at
@@ -111,7 +123,8 @@ sentrifig_settings
 `changed_by` + `updated_at` are the lightweight audit trail requested; nothing
 else is stored. No secrets, no DSN, no password.
 
-Uniqueness is enforced by the index, not by an ActiveRecord validation. A
+Uniqueness of the pair is enforced by the index, not by an ActiveRecord
+validation. A
 validation-level uniqueness check races under concurrent writers (both
 threads pass validation, one insert fails with `RecordInvalid`); the
 `ConcurrentUpdatesTest` found exactly that during development. The store
@@ -263,6 +276,42 @@ when `SENTRY_TRACING_ENABLE` is true; the old initializers set a
 `traces_sampler` unconditionally, which turned tracing on regardless of the
 flag.
 
+## 8b. The browser plane
+
+The frontend scope is never read on any hot path in this process. It is
+published by `Sentrifig::StateController` (`GET <mount>/state`) and consumed by
+`clients/browser` (`sentrifig-browser` on npm), which registers an event
+processor on the browser SDK's **global scope** — the direct analogue of
+`Sentry::Scope.global_event_processors` here.
+
+Three decisions worth recording:
+
+1. **A sibling controller hierarchy, not `skip_before_action`.**
+   `ClientController < ActionController::API` shares no ancestry with
+   `Sentrifig::ApplicationController`. Skipping the operator `authenticate!`
+   would leave Basic auth one edit — or one new parent `before_action` — away
+   from re-attaching to a browser-facing route, and would drag CSRF-by-exception
+   and the HTML layout onto a JSON GET that has neither. A dedicated test
+   asserts that operator Basic credentials alone do **not** open this endpoint.
+
+2. **Authentication is delegated to the host.** The gem cannot know whether an
+   app authenticates with JWT, a session, or Doorkeeper, so
+   `config.client_authenticator` takes an `ActionDispatch::Request`. Unset, or
+   raising, means 401 — fail closed on the endpoint. Because the client fails
+   *open* (an unreadable endpoint means "keep sending"), the composite failure
+   direction is always "browser Sentry stays on and noisy", never "silently
+   off".
+
+3. **`poll_interval` is not `cache_ttl`.** Five seconds is the right interval
+   for a Ruby process doing one indexed query against a local database. It is
+   the wrong interval for a browser tab left open all day. The client reads the
+   server-supplied value, so the interval can be changed without shipping
+   frontend code.
+
+The response body is an explicit allow-list rather than a serialised `Status`.
+`changed_by` in particular is the operator's Basic auth *username*, and this
+endpoint is readable by every logged-in application user.
+
 ## 9. Rails integration
 
 - `Sentrifig::Engine` with `isolate_namespace`, standard `app/`, `config/routes.rb`,
@@ -285,12 +334,15 @@ flag.
 ```ruby
 Sentrifig.configure { |c| ...; c.sentry { |sentry| ... } }
 Sentrifig.configuration
-Sentrifig.enabled?
-Sentrifig.enable!(by: nil)
-Sentrifig.disable!(by: nil)
-Sentrifig.status        # Runtime::Status
+Sentrifig.enabled?                       # backend scope; argument-free, hot path
+Sentrifig.enabled_for?(scope)
+Sentrifig.enable!(by: nil, scope: "backend")
+Sentrifig.disable!(by: nil, scope: "backend")
+Sentrifig.status(scope = "backend")      # Runtime::Status
+Sentrifig.statuses                       # one per scope
 Sentrifig.current_environment
-Sentrifig.refresh!
+Sentrifig.refresh!(scope = nil)          # nil refreshes every scope
+Sentrifig::Scope::BACKEND, FRONTEND, ALL
 Sentrifig.install!
 Sentrifig.logger
 Sentrifig::SentrySetup::STRIP_AUTHORIZATION, DEFAULT_TRACES_SAMPLER
