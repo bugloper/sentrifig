@@ -1,5 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { createSentrifig, installGate } from '../src/index';
+import { createSentrifig, installGate, type SentryEventLike } from '../src/index';
+
+// Sentry events carry far more than we touch; the gate is generic over them.
+type TestEvent = SentryEventLike & { message?: string };
+
+const event = (message: string): TestEvent => ({ message });
 
 const json = (body: unknown, init: { status?: number; contentType?: string } = {}) =>
   new Response(typeof body === 'string' ? body : JSON.stringify(body), {
@@ -34,33 +39,33 @@ beforeEach(() => {
 describe('gating', () => {
   it('passes events through before the first response', () => {
     const { instance } = make(vi.fn().mockReturnValue(new Promise(() => {})));
-    const event = { message: 'boom' };
-    expect(instance.eventProcessor(event)).toBe(event);
+    const e = event('boom');
+    expect(instance.eventProcessor(e)).toBe(e);
     expect(instance.state().source).toBe('default');
   });
 
   it('returns null once the server says disabled', async () => {
     const { instance } = make(vi.fn().mockResolvedValue(ok({ enabled: false })));
     await instance.refresh();
-    expect(instance.eventProcessor({ message: 'boom' })).toBeNull();
+    expect(instance.eventProcessor(event('boom'))).toBeNull();
     expect(instance.state()).toMatchObject({ enabled: false, source: 'server', scope: 'frontend' });
   });
 
   it('passes the event object through untouched when enabled', async () => {
     const { instance } = make(vi.fn().mockResolvedValue(ok()));
     await instance.refresh();
-    const event = { message: 'fine' };
-    expect(instance.eventProcessor(event)).toBe(event);
+    const e = event('fine');
+    expect(instance.eventProcessor(e)).toBe(e);
   });
 
   it('fails open if the gate itself throws', () => {
     const { instance } = make(vi.fn().mockResolvedValue(ok()));
-    const event = {
+    const exploding = {
       get breadcrumbs(): never {
         throw new Error('exploding event');
       },
     };
-    expect(instance.eventProcessor(event as never)).toBe(event);
+    expect(instance.eventProcessor(exploding as never)).toBe(exploding);
     expect(silentLogger.warn).toHaveBeenCalledWith(
       '[sentrifig] gate error, passing event through:',
       expect.any(Error),
@@ -72,8 +77,8 @@ describe('gating', () => {
     await instance.refresh();
 
     const breadcrumbs = [{ data: { url: '/sentrifig/state' } }, { data: { url: '/graphql' } }];
-    const event = { breadcrumbs };
-    const result = instance.eventProcessor(event)!;
+    const withCrumbs = { breadcrumbs };
+    const result = instance.eventProcessor(withCrumbs)!;
 
     expect(result.breadcrumbs).toHaveLength(1);
     expect(breadcrumbs).toHaveLength(2);
@@ -102,7 +107,7 @@ describe('fetching and caching', () => {
     const fetchImpl = vi.fn().mockReturnValue(new Promise(() => {}));
     const { instance } = make(fetchImpl);
 
-    for (let i = 0; i < 1000; i += 1) instance.eventProcessor({ message: String(i) });
+    for (let i = 0; i < 1000; i += 1) instance.eventProcessor(event(String(i)));
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });

@@ -9,10 +9,13 @@
 
 /** The shape we actually touch on a Sentry event. Structural on purpose: this
  *  package has no @sentry/* dependency, not even a peer one, so it never has to
- *  track Sentry's major versions. */
+ *  track Sentry's major versions.
+ *
+ *  Deliberately no index signature: one would stop Sentry's own `Event` being
+ *  assignable to this, and the whole point is that `eventProcessor` can be
+ *  handed straight to `addEventProcessor`. */
 export interface SentryEventLike {
-  breadcrumbs?: Array<{ data?: { url?: string } } | null | undefined>;
-  [key: string]: unknown;
+  breadcrumbs?: Array<{ data?: Record<string, unknown> } | null | undefined>;
 }
 
 export type StateSource = 'default' | 'server' | 'session' | 'fallback';
@@ -54,8 +57,10 @@ export interface SentrifigOptions {
 }
 
 export interface Sentrifig {
-  /** Register this with Sentry.getGlobalScope().addEventProcessor(...). */
-  readonly eventProcessor: (event: SentryEventLike, hint?: unknown) => SentryEventLike | null;
+  /** Register this with Sentry.getGlobalScope().addEventProcessor(...).
+   *  Generic so it satisfies Sentry's EventProcessor, which must return the
+   *  same event type it was given. */
+  readonly eventProcessor: <T extends SentryEventLike>(event: T, hint?: unknown) => T | null;
   enabled(): boolean;
   state(): SentrifigState;
   /** Forces a read now. Never rejects. */
@@ -108,12 +113,12 @@ export function createSentrifig(options: SentrifigOptions): Sentrifig {
     return state.enabled;
   }
 
-  const eventProcessor = (event: SentryEventLike): SentryEventLike | null => {
+  const eventProcessor = <T extends SentryEventLike>(event: T): T | null => {
     try {
       if (!enabled()) return null;
 
       if (o.filterOwnBreadcrumbs && event.breadcrumbs && event.breadcrumbs.length > 0) {
-        const kept = event.breadcrumbs.filter((b) => b?.data?.url !== o.url);
+        const kept = event.breadcrumbs.filter((b) => b?.data?.['url'] !== o.url);
         // notifyEventProcessors hands us a shallow clone, so the breadcrumbs
         // array is shared with the caller. Copy rather than mutate.
         if (kept.length !== event.breadcrumbs.length) return { ...event, breadcrumbs: kept };

@@ -29,6 +29,9 @@ const sentrifig = createSentrifig({
 });
 
 installGate(Sentry, sentrifig);
+
+// Read the state once now; the instance is otherwise lazy. Never rejects.
+void sentrifig.refresh();
 ```
 
 `installGate` is one line of sugar for:
@@ -49,8 +52,11 @@ through `prepareEvent`, and returning `null` makes Sentry record a dropped event
 It mirrors the gem's data plane deliberately.
 
 - **Pull-on-demand, never `setInterval`.** State is refreshed from the hot path, at most once per
-  TTL. A tab that raises no events makes exactly one request, at boot. The switch is therefore
-  picked up on the next event after the TTL — which is the only moment it changes anything.
+  TTL, so the switch is picked up on the next event after the TTL — which is the only moment it
+  changes anything. The instance is otherwise **lazy**: left alone it would not ask until the first
+  event. Call `refresh()` once after wiring it up (as the example above does not, but a real
+  bootstrap should) so the very first error of the session is gated correctly; after that a tab
+  that raises no events makes no further requests at all.
 - **Fails open, always.** A network error, a non-2xx, a non-JSON content type, or a malformed body
   all keep the last known value (or the default, enabled) and log once per outage. The switch must
   never be the reason an error goes unreported.
