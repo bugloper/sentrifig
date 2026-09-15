@@ -104,10 +104,22 @@ module Sentrifig
         @type == :integer ? 1 : "any"
       end
 
-      # For display and for the JSON payload: lists become a comma-separated
-      # string in a text field, everything else is itself.
+      # For the form: a list becomes one entry per line, everything else is
+      # itself. Monospace plus one-per-line is as close to readable as an
+      # editable field gets without JavaScript.
       def to_form(value)
+        list? ? Array(value).join("\n") : value
+      end
+
+      # For a terminal or a log line, where newlines would wreck the layout.
+      def to_display(value)
         list? ? Array(value).join(", ") : value
+      end
+
+      # How tall the textarea should be: enough for the content, with room to
+      # add one, and capped so a long list does not push the rest off screen.
+      def rows_for(value)
+        [[Array(value).size + 1, 3].max, 12].min
       end
 
       private
@@ -154,8 +166,12 @@ module Sentrifig
         value.empty? ? nil : value
       end
 
+      # Accepts newlines or commas, in any mix. The textarea offers one entry
+      # per line because a 24-item list is unreadable on one; commas keep
+      # working so pasting a value from a configmap, a rake task, or an older
+      # version still does the obvious thing.
       def coerce_list(raw)
-        items = raw.is_a?(Array) ? raw : raw.to_s.split(",")
+        items = raw.is_a?(Array) ? raw : raw.to_s.split(/[,\n]/)
         items.map { |item| item.to_s.strip }.reject(&:empty?)
       end
 

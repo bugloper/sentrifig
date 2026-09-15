@@ -129,7 +129,7 @@ namespace :sentrifig do
           "default"
         end
 
-      puts format("  %-28s %-34s %s", definition.key, definition.to_form(value).inspect, "(#{origin})")
+      puts format("  %-28s %-34s %s", definition.key, definition.to_display(value).inspect, "(#{origin})")
       puts format("  %-28s %s", "", definition.note) if definition.note
     end
 

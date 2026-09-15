@@ -65,6 +65,10 @@ module Sentrifig
       excluded = definition(Scope::BACKEND, :excluded_exceptions)
 
       assert_equal [%w[A::B C::D], nil], excluded.cast(" A::B ,C::D , ")
+      # Newlines are what the textarea submits; a mix of both must also work,
+      # so pasting an old comma-separated value still does the obvious thing.
+      assert_equal [%w[A::B C::D], nil], excluded.cast("A::B\nC::D\n")
+      assert_equal [%w[A B C], nil], excluded.cast("A\nB, C")
       assert_equal [[], nil], excluded.cast("")
       assert_equal [%w[A B], nil], excluded.cast(%w[A B])
     end
@@ -133,7 +137,15 @@ module Sentrifig
       assert_equal "any", definition(Scope::BACKEND, :sample_rate).step
       assert_equal 1, definition(Scope::BACKEND, :max_breadcrumbs).step
       assert_equal "text", definition(Scope::BACKEND, :excluded_exceptions).input_type
-      assert_equal "A, B", definition(Scope::BACKEND, :excluded_exceptions).to_form(%w[A B])
+      excluded = definition(Scope::BACKEND, :excluded_exceptions)
+      # One entry per line in the form; commas only where newlines would wreck
+      # the layout, such as a terminal.
+      assert_equal "A\nB", excluded.to_form(%w[A B])
+      assert_equal "A, B", excluded.to_display(%w[A B])
+      assert excluded.multiline?
+      # Tall enough for the content plus a spare line, capped.
+      assert_equal 3, excluded.rows_for(%w[A B])
+      assert_equal 12, excluded.rows_for(("a".."z").to_a)
     end
   end
 

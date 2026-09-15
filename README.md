@@ -404,6 +404,17 @@ visible rather than mysterious.
 
 ### Validation
 
+List settings (`excluded_exceptions`, `enabled_environments`) are edited one
+entry per line in a monospace field sized to their content, because 24 class
+names on a single comma-separated line is unreadable. Commas still parse, in any
+mix with newlines, so pasting a value from a configmap or an older version does
+the obvious thing.
+
+There is deliberately **no syntax highlighting**: a `<textarea>` renders plain
+text, so every approach to colouring it needs JavaScript, and this page ships
+none. That is a considered trade for a surface that can silence error reporting
+— no supply-chain surface, and nothing for a host's CSP to allow.
+
 Every setting declares its type, its range and its permitted values once, in
 `Sentrifig::Settings::Schema`. That one declaration drives the form inputs (a
 number field with `min`/`max` for a rate, a checkbox for a boolean), the server-

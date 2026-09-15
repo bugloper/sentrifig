@@ -65,13 +65,13 @@ module Sentrifig
           key: :excluded_exceptions,
           type: :string_list,
           default: -> { SentrySetup::EXCLUDED_EXCEPTIONS.dup },
-          description: "Exception class names never reported. Comma-separated."
+          description: "Exception class names never reported."
         ),
         Definition.new(
           key: :enabled_environments,
           type: :string_list,
           default: -> { SentrySetup::ENABLED_ENVIRONMENTS.dup },
-          description: "Environments allowed to send at all. Comma-separated.",
+          description: "Environments allowed to send at all.",
           note: "Removing this environment from the list stops everything, the same as the switch."
         ),
         Definition.new(

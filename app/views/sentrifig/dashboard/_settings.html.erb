@@ -33,15 +33,17 @@
           <input type="checkbox" id="<%= field_id %>" name="settings[<%= definition.key %>]"
                  value="true" <%= "checked" if value %>>
         <% elsif definition.multiline? %>
-          <textarea id="<%= field_id %>" name="settings[<%= definition.key %>]" rows="4"
-                    placeholder="comma-separated"><%= definition.to_form(value) %></textarea>
+          <textarea id="<%= field_id %>" name="settings[<%= definition.key %>]"
+                    rows="<%= definition.rows_for(value) %>" spellcheck="false"
+                    placeholder="one per line"><%= definition.to_form(value) %></textarea>
+          <p class="count"><%= pluralize(Array(value).size, "entry", plural: "entries") %>, one per line</p>
         <% else %>
           <input type="<%= definition.input_type %>" id="<%= field_id %>"
                  name="settings[<%= definition.key %>]"
                  value="<%= definition.to_form(value) %>"
                  <% if definition.step %>step="<%= definition.step %>"<% end %>
                  <% if definition.range %>min="<%= definition.range.first %>" max="<%= definition.range.last %>"<% end %>
-                 <% if definition.list? %>placeholder="comma-separated"<% end %>>
+                 <% if definition.list? %>placeholder="one per line"<% end %>>
         <% end %>
       </div>
 
