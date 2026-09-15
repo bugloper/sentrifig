@@ -306,6 +306,10 @@ Then `__sentrifig.state()` returns `{enabled, environment, scope, ttl, source}`.
 
 - **Errors, transactions and session replays all stop together.** One processor covers them,
   because all three pass through Sentry's `prepareEvent`.
+- **Sampling rates follow the backend too.** `sample_rate`, `traces_sample_rate`, the replay rates
+  and `send_default_pii` are served alongside the switch and applied to the live client, so they can
+  be tuned from the dashboard without a rebuild. `replays_session_sample_rate` applies to new
+  sessions rather than open tabs, since it is sampled when a session starts.
 - **Breadcrumbs, tags and user context keep accumulating** while disabled, so the first event after
   re-enabling carries full context. Disabling stops *delivery*, not instrumentation — which is why
   re-enabling is instant, and why this is not a performance lever.

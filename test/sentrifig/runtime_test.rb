@@ -18,9 +18,9 @@ module Sentrifig
       end
 
       # Keyed by [environment, scope], like the real table's unique index.
-      def set(environment, enabled:, scope: Scope::BACKEND, changed_by: "other-process")
+      def set(environment, enabled:, scope: Scope::BACKEND, values: {}, changed_by: "other-process")
         @rows[[environment, scope]] =
-          Store::Record.new(enabled: enabled, changed_by: changed_by, updated_at: Time.now)
+          Store::Record.new(enabled: enabled, values: values, changed_by: changed_by, updated_at: Time.now)
       end
 
       def fetch(environment, scope: Scope::BACKEND)
@@ -31,11 +31,16 @@ module Sentrifig
         @rows[[environment, scope]]
       end
 
-      def write(environment, enabled:, scope: Scope::BACKEND, changed_by: nil)
+      def write(environment, enabled: :unchanged, scope: Scope::BACKEND, values: :unchanged, changed_by: nil)
         @writes += 1
         raise @failure if @failure
 
-        set(environment, enabled: enabled, scope: scope, changed_by: changed_by)
+        existing = @rows[[environment, scope]]
+        set(environment,
+            enabled: enabled == :unchanged ? existing&.enabled : enabled,
+            scope: scope,
+            values: values == :unchanged ? (existing&.values || {}) : values,
+            changed_by: changed_by)
       end
     end
 

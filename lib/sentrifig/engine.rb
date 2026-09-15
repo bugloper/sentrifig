@@ -21,6 +21,11 @@ module Sentrifig
     # simply keeps the install visible in boot order.
     config.after_initialize do
       Sentrifig.install!
+      # Stored overrides beat the environment variables SentrySetup just applied,
+      # so re-assert them once the SDK exists. Best effort: a database that is
+      # not reachable at boot leaves the env-derived values in place, and the
+      # next settings change applies them.
+      Sentrifig.apply_to_sentry!
     end
   end
 end

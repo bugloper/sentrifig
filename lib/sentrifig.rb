@@ -8,6 +8,7 @@ require_relative "sentrifig/version"
 require_relative "sentrifig/errors"
 require_relative "sentrifig/configuration"
 require_relative "sentrifig/scope"
+require_relative "sentrifig/settings/schema"
 require_relative "sentrifig/store"
 require_relative "sentrifig/runtime"
 require_relative "sentrifig/gate"
@@ -92,6 +93,107 @@ module Sentrifig
       Scope::ALL.map { |scope| status(scope) }
     end
 
+    # Resolved settings for a scope: stored override, else the environment
+    # variable, else the schema default.
+    #
+    # @return [Hash{Symbol=>Object}]
+    def settings(scope = Scope::BACKEND)
+      runtime(scope).settings
+    end
+
+    # Validates and stores setting overrides, then applies the backend ones to
+    # the running Sentry SDK immediately. A key mapped to nil is reset to its
+    # default.
+    #
+    # @param input [Hash] raw values; strings from a form are cast by the schema
+    # @raise [ValidationError] with every failing key named
+    # @raise [PersistenceError]
+    # @return [Hash{Symbol=>Object}] the resolved settings afterwards
+    def update_settings!(scope = Scope::BACKEND, input = {}, by: nil)
+      scope = Scope.coerce(scope)
+      resets, assignments = input.partition { |_key, value| value.nil? }
+
+      values, errors = Settings::Schema.cast(scope, assignments.to_h)
+      unless errors.empty?
+        raise ValidationError, errors.map { |key, message| "#{key} #{message}" }.join("; ")
+      end
+
+      resets.each { |key, _| values[key.to_sym] = nil }
+
+      result = runtime(scope).update_settings!(values, by: by)
+      apply_to_sentry! if scope == Scope::BACKEND
+      result
+    end
+
+    # Resets one setting to its default.
+    def reset_setting!(scope = Scope::BACKEND, key = nil, by: nil)
+      scope = Scope.coerce(scope)
+      raise ValidationError, "#{key} is not a setting for the #{scope} scope" unless Settings::Schema.find(scope, key)
+
+      update_settings!(scope, { key.to_sym => nil }, by: by)
+    end
+
+    # Pushes stored setting *overrides* onto the live Sentry configuration.
+    #
+    # Only overrides, never defaults: by the time this runs, SentrySetup and the
+    # application's own `config.sentry { }` blocks have already produced the
+    # baseline. Re-asserting schema defaults here would silently undo an app's
+    # deliberate configuration -- which it did, until the gate test caught it.
+    #
+    # Only options sentry-ruby reads per event are in the schema, so this takes
+    # effect for the next event rather than needing a restart.
+    #
+    # @return [Boolean] false when Sentry is not initialised
+    def apply_to_sentry!
+      return false unless ::Sentry.initialized?
+
+      baseline # capture what the app configured, before we change any of it
+
+      sentry = ::Sentry.configuration
+      overrides = runtime(Scope::BACKEND).overridden_keys
+      resolved = settings(Scope::BACKEND)
+
+      Settings::Schema.for_scope(Scope::BACKEND).each do |definition|
+        key = definition.key
+        value = overrides.include?(key) ? resolved[key] : baseline[key]
+        next if key == :release && value.nil? # leave Sentry's own detection alone
+
+        sentry.public_send(:"#{key}=", value) if sentry.respond_to?(:"#{key}=")
+      end
+      true
+    rescue StandardError => e
+      # Never let a settings change break the SDK it is configuring.
+      logger.error("[sentrifig] could not apply settings to Sentry: #{e.class}: #{e.message}")
+      false
+    end
+
+    # What the Sentry configuration held before sentrifig touched it: the
+    # environment variables plus the application's own `config.sentry { }`
+    # blocks. This, not the schema's literal default, is what "default" means on
+    # the dashboard and what resetting a setting restores.
+    #
+    # Captured once, the first time it is needed after Sentry.init.
+    # @return [Hash{Symbol=>Object}]
+    def baseline
+      return @baseline if @baseline
+      return {} unless ::Sentry.initialized?
+
+      sentry = ::Sentry.configuration
+      captured = Settings::Schema.for_scope(Scope::BACKEND).to_h do |definition|
+        value = sentry.respond_to?(definition.key) ? sentry.public_send(definition.key) : definition.default_value
+        [definition.key, dup_if_possible(value)]
+      end
+
+      MUTEX.synchronize { @baseline ||= captured.freeze }
+    end
+
+    # @api private
+    def dup_if_possible(value)
+      value.dup
+    rescue StandardError
+      value
+    end
+
     def current_environment
       configuration.environment
     end
@@ -153,6 +255,7 @@ module Sentrifig
         @configuration = nil
         @runtimes = nil
         @backend_runtime = nil
+        @baseline = nil
       end
     end
   end

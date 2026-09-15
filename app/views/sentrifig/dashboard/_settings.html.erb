@@ -1,0 +1,68 @@
+<% definitions = Sentrifig::Settings::Schema.for_scope(status.scope) %>
+
+<h3>Settings</h3>
+
+<%= form_with url: scoped_settings_path(scope: status.scope), method: :post, local: true do %>
+  <table class="settings">
+    <% definitions.each do |definition| %>
+      <% value = status.settings[definition.key] %>
+      <% overridden = status.overridden?(definition.key) %>
+      <tr class="<%= overridden ? 'overridden' : 'default' %>">
+        <th scope="row">
+          <label for="<%= status.scope %>_<%= definition.key %>"><%= definition.key %></label>
+          <span class="origin">
+            <% if overridden %>
+              set here
+            <% elsif definition.env_present? %>
+              default from <%= definition.env %>
+            <% else %>
+              default
+            <% end %>
+          </span>
+        </th>
+        <td class="value">
+          <% if definition.boolean? %>
+            <%# The hidden field is what makes an unchecked box submit `false`
+                rather than nothing at all. %>
+            <input type="hidden" name="settings[<%= definition.key %>]" value="false">
+            <input type="checkbox" id="<%= status.scope %>_<%= definition.key %>"
+                   name="settings[<%= definition.key %>]" value="true" <%= "checked" if value %>>
+          <% else %>
+            <input type="<%= definition.input_type %>"
+                   id="<%= status.scope %>_<%= definition.key %>"
+                   name="settings[<%= definition.key %>]"
+                   value="<%= definition.to_form(value) %>"
+                   <% if definition.step %>step="<%= definition.step %>"<% end %>
+                   <% if definition.range %>min="<%= definition.range.first %>" max="<%= definition.range.last %>"<% end %>
+                   <% if definition.list? %>placeholder="comma-separated"<% end %>>
+          <% end %>
+        </td>
+        <td class="help">
+          <%= definition.description %>
+          <% if definition.range %>
+            <span class="constraint"><%= definition.range.first %>&ndash;<%= definition.range.last %></span>
+          <% end %>
+          <% if definition.note %>
+            <span class="note"><%= definition.note %></span>
+          <% end %>
+        </td>
+      </tr>
+    <% end %>
+  </table>
+
+  <div class="actions">
+    <%= submit_tag "Save #{status.scope} settings", class: "btn primary" %>
+  </div>
+<% end %>
+
+<% overridden = definitions.select { |definition| status.overridden?(definition.key) } %>
+<% if overridden.any? %>
+  <p class="meta">Reset to default:</p>
+  <div class="resets">
+    <% overridden.each do |definition| %>
+      <%= button_to definition.key,
+                    scoped_setting_reset_path(scope: status.scope, key: definition.key),
+                    method: :post, class: "btn small" %>
+    <% end %>
+  </div>
+<% end %>

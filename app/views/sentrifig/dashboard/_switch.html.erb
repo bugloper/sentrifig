@@ -21,7 +21,7 @@
     <% elsif status.degraded? %>
       The database is currently unreachable. Showing the last known state; changes cannot be saved right now.
     <% else %>
-      No setting stored yet. Showing the default.
+      Never changed here &mdash; this is the default.
     <% end %>
   </p>
 
@@ -32,6 +32,8 @@
       <%= button_to "Enable #{status.scope} Sentry", scoped_enable_path(scope: status.scope), method: :post, class: "btn primary" %>
     <% end %>
   </div>
+
+  <%= render "settings", status: status %>
 
   <p class="meta">
     <% if status.scope == Sentrifig::Scope::BACKEND %>

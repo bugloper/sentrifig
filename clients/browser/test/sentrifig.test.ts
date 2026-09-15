@@ -364,6 +364,111 @@ describe('sessionStorage seed', () => {
   });
 });
 
+describe('settings', () => {
+  const withSettings = (settings: Record<string, unknown>) =>
+    json({ enabled: true, scope: 'frontend', poll_interval: 60, settings });
+
+  const fakeSentry = (options: Record<string, unknown>) => ({
+    getGlobalScope: () => ({ addEventProcessor: vi.fn() }),
+    getClient: () => ({ getOptions: () => options }),
+  });
+
+  it('applies the backend settings to the live client options', async () => {
+    const options: Record<string, unknown> = { sampleRate: 1.0, tracesSampleRate: 1.0 };
+    const { instance } = make(
+      vi.fn().mockResolvedValue(withSettings({ sample_rate: 0.25, traces_sample_rate: 0.5 })),
+    );
+
+    installGate(fakeSentry(options), instance);
+    await instance.refresh();
+
+    expect(options['sampleRate']).toBe(0.25);
+    expect(options['tracesSampleRate']).toBe(0.5);
+  });
+
+  it('maps every wire name to its camelCase Sentry option', async () => {
+    const options: Record<string, unknown> = {};
+    const { instance } = make(
+      vi.fn().mockResolvedValue(
+        withSettings({
+          sample_rate: 0.1,
+          traces_sample_rate: 0.2,
+          replays_session_sample_rate: 0.3,
+          replays_on_error_sample_rate: 0.4,
+          send_default_pii: true,
+        }),
+      ),
+    );
+
+    installGate(fakeSentry(options), instance);
+    await instance.refresh();
+
+    expect(options).toEqual({
+      sampleRate: 0.1,
+      tracesSampleRate: 0.2,
+      replaysSessionSampleRate: 0.3,
+      replaysOnErrorSampleRate: 0.4,
+      sendDefaultPii: true,
+    });
+  });
+
+  it('ignores values of the wrong type rather than poisoning the SDK options', async () => {
+    const options: Record<string, unknown> = {};
+    const { instance } = make(
+      vi.fn().mockResolvedValue(
+        withSettings({ sample_rate: 'half', send_default_pii: 'yes', unknown_option: 1 }),
+      ),
+    );
+
+    installGate(fakeSentry(options), instance);
+    await instance.refresh();
+
+    expect(options).toEqual({});
+    expect(instance.state().settings).toEqual({});
+  });
+
+  it('applies settings already known when the gate is installed later', async () => {
+    const options: Record<string, unknown> = {};
+    const { instance } = make(vi.fn().mockResolvedValue(withSettings({ sample_rate: 0.25 })));
+
+    await instance.refresh();
+    installGate(fakeSentry(options), instance);
+
+    expect(options['sampleRate']).toBe(0.25);
+  });
+
+  it('survives a Sentry client that is not ready yet', async () => {
+    const { instance } = make(vi.fn().mockResolvedValue(withSettings({ sample_rate: 0.25 })));
+
+    installGate({ getGlobalScope: () => ({ addEventProcessor: vi.fn() }) }, instance);
+
+    await expect(instance.refresh()).resolves.toBeUndefined();
+    expect(instance.state().settings.sample_rate).toBe(0.25);
+  });
+
+  it('can be turned off entirely', async () => {
+    const options: Record<string, unknown> = { sampleRate: 1.0 };
+    const { instance } = make(vi.fn().mockResolvedValue(withSettings({ sample_rate: 0.25 })), {
+      applySettings: false,
+    });
+
+    installGate(fakeSentry(options), instance);
+    await instance.refresh();
+
+    expect(options['sampleRate']).toBe(1.0);
+  });
+
+  it('a response with no settings leaves the options alone', async () => {
+    const options: Record<string, unknown> = { sampleRate: 1.0 };
+    const { instance } = make(vi.fn().mockResolvedValue(ok()));
+
+    installGate(fakeSentry(options), instance);
+    await instance.refresh();
+
+    expect(options['sampleRate']).toBe(1.0);
+  });
+});
+
 describe('installGate', () => {
   it('registers the processor on the global scope', () => {
     const addEventProcessor = vi.fn();
@@ -377,9 +482,13 @@ describe('installGate', () => {
 
 describe('the gem contract', () => {
   it('accepts the exact body the Ruby state endpoint renders', async () => {
+    // Kept in step with Sentrifig::StateController and asserted key-for-key by
+    // test/controllers/state_controller_test.rb.
     const fixture = JSON.parse(
-      // Kept in step with test/controllers/state_controller_test.rb.
-      '{"enabled":false,"scope":"frontend","environment":"staging","source":"database","poll_interval":60}',
+      '{"enabled":false,"scope":"frontend","environment":"staging","source":"database",' +
+        '"poll_interval":60,"settings":{"sample_rate":1.0,"traces_sample_rate":0.1,' +
+        '"replays_session_sample_rate":0.01,"replays_on_error_sample_rate":1.0,' +
+        '"send_default_pii":false}}',
     );
     const { instance } = make(vi.fn().mockResolvedValue(json(fixture)));
 
@@ -391,6 +500,13 @@ describe('the gem contract', () => {
       environment: 'staging',
       ttl: 60_000,
       source: 'server',
+      settings: {
+        sample_rate: 1.0,
+        traces_sample_rate: 0.1,
+        replays_session_sample_rate: 0.01,
+        replays_on_error_sample_rate: 1.0,
+        send_default_pii: false,
+      },
     });
   });
 });

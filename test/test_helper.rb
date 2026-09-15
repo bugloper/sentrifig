@@ -51,6 +51,13 @@ module SentrifigTestSupport
   end
 end
 
+# Sentry's configuration is global, and applying settings mutates it in place.
+# Snapshot the pristine values once and restore them between examples, or a test
+# that changes sample_rate silently becomes the next test's baseline.
+PRISTINE_SENTRY_CONFIG = Sentrifig::Settings::Schema.for_scope(Sentrifig::Scope::BACKEND).to_h do |definition|
+  [definition.key, Sentry.configuration.public_send(definition.key)]
+end.freeze
+
 class ActiveSupport::TestCase
   include Sentrifig::TestHelper
   include SentrifigTestSupport
@@ -65,6 +72,11 @@ class ActiveSupport::TestCase
   teardown do
     teardown_sentrifig_test
     Sentrifig.reset!
+    PRISTINE_SENTRY_CONFIG.each do |key, value|
+      Sentry.configuration.public_send(:"#{key}=", value.dup)
+    rescue StandardError
+      Sentry.configuration.public_send(:"#{key}=", value)
+    end
   end
 end
 

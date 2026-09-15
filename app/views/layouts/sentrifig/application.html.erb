@@ -13,7 +13,7 @@
       margin: 0; padding: 2rem 1rem; background: #f4f5f7; color: #1f2933;
       font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
-    main { max-width: 32rem; margin: 0 auto; }
+    main { max-width: 46rem; margin: 0 auto; }
     h1 { font-size: 1.4rem; margin: 0 0 1.5rem; }
     h2 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: .06em; color: #616e7c; margin: 1.5rem 0 .5rem; }
     .card + .card { margin-top: 1rem; }
@@ -27,6 +27,24 @@
     .status.enabled  { border-color: #2f855a; color: #22543d; background: #f0fff4; }
     .status.disabled { border-color: #c53030; color: #742a2a; background: #fff5f5; }
     .meta { color: #616e7c; font-size: .9rem; margin: .75rem 0 0; }
+    h3 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: #616e7c; margin: 1.5rem 0 .5rem; }
+    table.settings { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    table.settings th { text-align: left; font-weight: 600; vertical-align: top; padding: .5rem .75rem .5rem 0; width: 13rem; }
+    table.settings td { vertical-align: top; padding: .5rem 0; }
+    table.settings tr + tr th, table.settings tr + tr td { border-top: 1px solid #eef0f3; }
+    table.settings tr.overridden th { border-left: 3px solid #2f855a; padding-left: .5rem; }
+    table.settings input[type=text], table.settings input[type=number] {
+      width: 100%; padding: .35rem .5rem; border: 1px solid #d9dde3; border-radius: 4px; font: inherit;
+    }
+    td.value { width: 11rem; }
+    td.help { color: #616e7c; padding-left: .75rem; }
+    .origin { display: block; font-weight: 400; font-size: .75rem; color: #7b8794; }
+    tr.overridden .origin { color: #2f855a; }
+    .constraint { display: inline-block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .75rem; }
+    .note { display: block; font-size: .8rem; color: #975a16; margin-top: .25rem; }
+    .resets { display: flex; flex-wrap: wrap; gap: .5rem; }
+    .resets form { margin: 0; }
+    .btn.small { width: auto; padding: .35rem .7rem; font-size: .8rem; background: #616e7c; }
     .actions { margin-top: 1.5rem; }
     .btn {
       display: inline-block; width: 100%; padding: .8rem 1rem; border: 0; border-radius: 6px;

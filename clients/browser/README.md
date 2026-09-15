@@ -79,6 +79,21 @@ It mirrors the gem's data plane deliberately.
 Disabling stops *delivery*, not *instrumentation*: breadcrumbs, tags and spans keep accumulating,
 so the first event after re-enabling carries full context.
 
+### Settings, not just on/off
+
+The backend also serves a small set of Sentry options — `sample_rate`,
+`traces_sample_rate`, `replays_session_sample_rate`, `replays_on_error_sample_rate` and
+`send_default_pii` — and this package applies them to the live client. Sentry reads `sampleRate`
+per event and `tracesSampleRate` per span from its options object, and mutates that object itself
+internally, so these take effect without a reload.
+
+One honest exception: `replays_session_sample_rate` is sampled when a session *starts*, so it
+applies to new sessions rather than tabs that are already open.
+
+Values of the wrong type are ignored rather than written into the SDK's options, so a malformed or
+future field cannot poison the client. Pass `applySettings: false` to take the switch and manage the
+options yourself.
+
 ## Options
 
 | Option | Default | |
@@ -93,6 +108,7 @@ so the first event after re-enabling carries full context.
 | `maxBackoff` | `300_000` | Ceiling for the failure backoff. |
 | `persist` / `seedMaxAge` | `true` / `300_000` | The `sessionStorage` seed. |
 | `filterOwnBreadcrumbs` | `true` | Strip this package's own fetch breadcrumbs. |
+| `applySettings` | `true` | Apply the backend's Sentry options (sampling rates, PII) to the running client. |
 | `onStateChange` | — | Called when the state actually changes. |
 | `logger`, `fetchImpl`, `now` | — | Injection points, mostly for tests. |
 
@@ -104,7 +120,7 @@ so the first event after re-enabling carries full context.
   close the post-login blind spot.
 - `reset()` returns to the default and clears the seed. Call it on logout so the next user does not
   inherit the previous one's state.
-- `state()` returns `{ enabled, environment, scope, ttl, source }` where `source` is
+- `state()` returns `{ enabled, environment, scope, settings, ttl, source }` where `source` is
   `'default' | 'server' | 'session' | 'fallback'` — `'fallback'` means the endpoint is unreachable
   and this value is stale.
 

@@ -4,6 +4,34 @@
 
 ### Added
 
+- **Runtime settings.** Each scope now carries a set of Sentry options an
+  operator can change from the dashboard, by rake task, or through
+  `Sentrifig.update_settings!` -- sampling rates, `send_default_pii`,
+  `max_breadcrumbs`, `excluded_exceptions` and the rest. They take effect for
+  the next event, with no restart.
+
+  Only options the SDK reads *after* initialisation are included, verified
+  against sentry-ruby 7.0.0 and `@sentry/core` 9.47.1. `dsn` (the transport is
+  built from it), `breadcrumbs_logger` and `enabled_patches` (applied at init)
+  are deliberately absent: an editable field that silently does nothing is worse
+  than no field.
+
+  `Sentrifig::Settings::Schema` declares each setting's type, range and allowed
+  values once, and that declaration drives the form inputs, the server-side
+  validation, the rake tasks and the API. An invalid submission is rejected
+  whole -- one bad field saves nothing.
+
+  Precedence is: a stored override, else the baseline the application itself
+  configured (environment variables plus its own `config.sentry { }` blocks),
+  else the schema default. The baseline is captured before any override is
+  applied, so adopting this never replaces an app's own configuration with the
+  gem's literals. Once a setting is overridden, its environment variable has no
+  effect until it is reset -- the dashboard marks those settings `set here`.
+- `Sentrifig.settings`, `update_settings!`, `reset_setting!`, `baseline` and
+  `apply_to_sentry!`; `sentrifig:settings`, `sentrifig:set` and
+  `sentrifig:reset` rake tasks; `Sentrifig::ValidationError`.
+- The state endpoint carries the frontend scope's settings, and
+  `sentrifig-browser` applies them to the running client.
 - Frontend scope. State is stored per `(environment, scope)` with scopes `backend` and
   `frontend`, so browser Sentry can be switched independently of this application's Ruby SDK.
 - `GET <mount>/state` — JSON state for browser clients (`enabled`, `scope`, `environment`,
@@ -23,7 +51,11 @@
 
 ### Changed
 
+- `sentrifig_settings` gained a `values` json column holding setting overrides,
+  so the switch and the settings share one row and one read.
 - `Store#fetch` / `Store#write` take a `scope:` keyword, defaulting to `backend`.
+  `write` takes `values:`, and both `enabled:` and `values:` default to
+  `:unchanged` so either can be written without disturbing the other.
 - `Runtime` is instantiated per scope and takes `scope:`. `Runtime::Status` gained a `scope`
   member, and log lines carry `scope=`.
 - Dashboard forms post to `<mount>/<scope>/enable|disable`. The unscoped `<mount>/enable` and

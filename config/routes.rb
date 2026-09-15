@@ -11,6 +11,10 @@ Sentrifig::Engine.routes.draw do
   scope ":scope", constraints: { scope: Regexp.union(Sentrifig::Scope::ALL) } do
     post "enable",  to: "dashboard#enable",  as: :scoped_enable
     post "disable", to: "dashboard#disable", as: :scoped_disable
+
+    # Runtime settings. POST-only and CSRF-protected like the switches.
+    post "settings",           to: "settings#update", as: :scoped_settings
+    post "settings/:key/reset", to: "settings#reset", as: :scoped_setting_reset
   end
 
   # Pre-0.2 paths, kept: they act on the backend switch.

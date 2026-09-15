@@ -13,6 +13,11 @@ class CreateSentrifigSettings < ActiveRecord::Migration[7.1]
       # lands on the backend switch rather than violating null: false.
       t.string  :scope,       null: false, default: "backend"
       t.boolean :enabled,     null: false, default: true
+      # Operator overrides for the settings in Sentrifig::Settings::Schema,
+      # keyed by setting name. Only overridden keys are stored; anything absent
+      # falls back to the environment variable, then to the schema default.
+      # json rather than jsonb so the same migration runs on SQLite and MySQL.
+      t.json    :values
       t.string  :changed_by
 
       t.timestamps

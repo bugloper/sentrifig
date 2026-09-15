@@ -24,10 +24,14 @@ module Sentrifig
   # in effect (or the configured default if nothing was ever loaded), the
   # failure is logged once, and the next attempt is deferred by cache_ttl.
   class Runtime
-    Snapshot = Struct.new(:enabled, :source, :changed_by, :changed_at, keyword_init: true)
+    Snapshot = Struct.new(:enabled, :values, :source, :changed_by, :changed_at, keyword_init: true) do
+      # Stored overrides only. Resolution against the schema happens in
+      # #settings, so a snapshot stays a faithful copy of the row.
+      def values = (self[:values] || {})
+    end
 
     Status = Struct.new(:enabled, :environment, :scope, :source, :changed_by, :changed_at, :cache_ttl,
-                        :sdk_ready, :sdk_problems, keyword_init: true) do
+                        :settings, :overridden, :sdk_ready, :sdk_problems, keyword_init: true) do
       def enabled? = enabled == true
       # True when Sentry's own configuration allows sending (valid DSN, enabled environment).
       def sdk_ready? = sdk_ready == true
@@ -36,6 +40,8 @@ module Sentrifig
       def persisted? = source == :database
       # True when the last database read failed and this is a fallback value.
       def degraded? = source == :fallback
+      # True when this setting is an operator override rather than a default.
+      def overridden?(key) = Array(overridden).include?(key.to_sym)
     end
 
     MONOTONIC_CLOCK = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
@@ -66,17 +72,45 @@ module Sentrifig
     # Persists the new state, applies it to this process immediately, logs.
     # @raise [PersistenceError]
     def update!(enabled, by: nil)
-      record = @store.write(environment, scope: @scope, enabled: enabled, changed_by: by)
-      @lock.synchronize do
-        @failing = false
-        install_snapshot(snapshot_from(record))
+      record = persist(enabled: enabled, by: by, failure: "Sentry #{word(enabled)}") do
+        log(:info, "Sentry #{word(enabled)} scope=#{@scope} environment=#{environment} by=#{by || 'unknown'}")
       end
-      log(:info, "Sentry #{word(enabled)} scope=#{@scope} environment=#{environment} by=#{by || 'unknown'}")
-      enabled
-    rescue StandardError => e
-      log(:error, "could not persist Sentry #{word(enabled)} for scope=#{@scope} environment=#{environment}: " \
-                  "#{e.class}: #{e.message}")
-      raise PersistenceError, "could not persist sentrifig state: #{e.class}: #{e.message}"
+      record.enabled
+    end
+
+    # Merges setting overrides into the stored row. Keys mapped to nil are
+    # removed, which is how "reset to default" is expressed.
+    #
+    # @param changes [Hash{Symbol=>Object}] already cast by the schema
+    # @raise [PersistenceError]
+    def update_settings!(changes, by: nil)
+      merged = current_values.merge(changes).reject { |_key, value| value.nil? }
+
+      persist(values: merged, by: by, failure: "settings") do
+        described = changes.map { |key, value| "#{key}=#{value.nil? ? '(default)' : value.inspect}" }
+        log(:info, "settings changed scope=#{@scope} environment=#{environment} " \
+                   "by=#{by || 'unknown'} #{described.join(' ')}")
+      end
+
+      settings
+    end
+
+    # Resolved values for every setting in the scope: a stored override if there
+    # is one, otherwise the environment variable, otherwise the schema default.
+    def settings
+      stored = current_values
+      defaults = @scope == Scope::BACKEND ? Sentrifig.baseline : {}
+
+      Settings::Schema.for_scope(@scope).to_h do |definition|
+        key = definition.key
+        [key, stored.fetch(key) { defaults.fetch(key) { definition.default_value } }]
+      end
+    end
+
+    # Which settings are operator overrides rather than defaults.
+    def overridden_keys
+      schema_keys = Settings::Schema.keys(@scope)
+      current_values.keys.select { |key| schema_keys.include?(key) }
     end
 
     # Forces a synchronous database read (best effort: falls back like the hot
@@ -95,7 +129,9 @@ module Sentrifig
         source: snapshot.source,
         changed_by: snapshot.changed_by,
         changed_at: snapshot.changed_at,
-        cache_ttl: @configuration.cache_ttl
+        cache_ttl: @configuration.cache_ttl,
+        settings: settings,
+        overridden: overridden_keys
       )
     end
 
@@ -159,12 +195,35 @@ module Sentrifig
     end
 
     def snapshot_from(record)
-      Snapshot.new(enabled: record.enabled == true, source: :database,
+      Snapshot.new(enabled: record.enabled == true, values: record.values.freeze, source: :database,
                    changed_by: record.changed_by, changed_at: record.updated_at).freeze
     end
 
     def default_snapshot(source)
-      Snapshot.new(enabled: @configuration.enabled_by_default, source: source, changed_by: nil, changed_at: nil).freeze
+      Snapshot.new(enabled: @configuration.enabled_by_default, values: {}.freeze, source: source,
+                   changed_by: nil, changed_at: nil).freeze
+    end
+
+    # Reads through the cache like the hot path does, so callers see the same
+    # value the gate would.
+    def current_values
+      enabled?
+      (@snapshot || default_snapshot(:default)).values
+    end
+
+    # Shared write path for the switch and for settings.
+    def persist(by:, failure:, enabled: :unchanged, values: :unchanged)
+      record = @store.write(environment, scope: @scope, enabled: enabled, values: values, changed_by: by)
+      @lock.synchronize do
+        @failing = false
+        install_snapshot(snapshot_from(record))
+      end
+      yield
+      record
+    rescue StandardError => e
+      log(:error, "could not persist #{failure} for scope=#{@scope} environment=#{environment}: " \
+                  "#{e.class}: #{e.message}")
+      raise PersistenceError, "could not persist sentrifig state: #{e.class}: #{e.message}"
     end
 
     def word(enabled) = enabled ? "enabled" : "disabled"

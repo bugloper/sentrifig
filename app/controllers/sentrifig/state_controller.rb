@@ -9,6 +9,10 @@ module Sentrifig
   # *username* -- half of a static credential pair guarding a dashboard with no
   # lockout, no rotation and no MFA. changed_at, sdk_ready and sdk_problems are
   # left out too: useless to a browser, and sdk_problems is DSN-shaped text.
+  #
+  # `settings` carries the frontend scope's resolved values, which
+  # sentrifig-browser applies to the running SDK. They are sampling rates and
+  # booleans -- no secrets, and nothing about the Ruby side.
   class StateController < ClientController
     def show
       status = Sentrifig.status(Scope::FRONTEND)
@@ -18,7 +22,10 @@ module Sentrifig
         scope: Scope::FRONTEND,
         environment: status.environment,
         source: status.source.to_s,
-        poll_interval: Sentrifig.configuration.client_poll_interval
+        poll_interval: Sentrifig.configuration.client_poll_interval,
+        # Only the frontend scope's schema, so nothing about this process's own
+        # Sentry configuration reaches a browser.
+        settings: status.settings
       }
     end
   end
