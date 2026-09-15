@@ -1,45 +1,45 @@
-<div class="card">
-  <h2><%= status.scope == Sentrifig::Scope::BACKEND ? "Backend &mdash; Ruby events".html_safe : "Frontend &mdash; browser events".html_safe %></h2>
+<% backend = status.scope == Sentrifig::Scope::BACKEND %>
+<section class="card">
+  <header class="scope-head">
+    <div>
+      <h2><%= backend ? "Backend" : "Frontend" %></h2>
+      <p class="sub">
+        <% if backend %>
+          Ruby events from this application &mdash; exceptions, messages, transactions, cron check-ins.
+        <% else %>
+          Browser events from clients reading this state. Nothing in this process reads it.
+        <% end %>
+      </p>
+    </div>
 
-  <p class="meta">
-    <% if status.scope == Sentrifig::Scope::BACKEND %>
-      Gates events raised by this application: exceptions, messages, transactions and cron check-ins.
-    <% else %>
-      Gates events raised by browser clients that read this state. Nothing in this process reads it.
-    <% end %>
-  </p>
+    <div class="scope-state">
+      <span class="<%= class_names("pill", enabled: status.enabled?, disabled: !status.enabled?) %>"><%= status.label %></span>
+      <% if status.enabled? %>
+        <%= button_to "Disable #{status.scope} Sentry", scoped_disable_path(scope: status.scope),
+                      method: :post, class: "btn danger" %>
+      <% else %>
+        <%= button_to "Enable #{status.scope} Sentry", scoped_enable_path(scope: status.scope),
+                      method: :post, class: "btn primary" %>
+      <% end %>
+    </div>
+  </header>
 
-  <div class="status <%= status.enabled? ? 'enabled' : 'disabled' %>">
-    <%= status.label %>
-  </div>
-
-  <p class="meta">
+  <p class="<%= class_names("meta", degraded: status.degraded?) %>">
     <% if status.persisted? %>
       Last changed
-      <% if status.changed_at %>at <time datetime="<%= status.changed_at.iso8601 %>"><%= status.changed_at.utc.strftime("%Y-%m-%d %H:%M:%S UTC") %></time><% end %>
+      <% if status.changed_at %>at <time datetime="<%= status.changed_at.iso8601 %>"><%= status.changed_at.utc.strftime("%Y-%m-%d %H:%M UTC") %></time><% end %>
       by <%= status.changed_by.presence || "unknown" %>.
     <% elsif status.degraded? %>
-      The database is currently unreachable. Showing the last known state; changes cannot be saved right now.
+      The database is unreachable. Showing the last known state; changes cannot be saved right now.
     <% else %>
-      No setting stored yet. Showing the default.
+      Never changed here &mdash; this is the default.
+    <% end %>
+    <% if backend %>
+      Applies to every process of this environment within <%= status.cache_ttl %>s.
+    <% else %>
+      Picked up by browser clients within <%= Sentrifig.configuration.client_poll_interval %>s, with no reload.
     <% end %>
   </p>
 
-  <div class="actions">
-    <% if status.enabled? %>
-      <%= button_to "Disable #{status.scope} Sentry", scoped_disable_path(scope: status.scope), method: :post, class: "btn danger" %>
-    <% else %>
-      <%= button_to "Enable #{status.scope} Sentry", scoped_enable_path(scope: status.scope), method: :post, class: "btn primary" %>
-    <% end %>
-  </div>
-
-  <p class="meta">
-    <% if status.scope == Sentrifig::Scope::BACKEND %>
-      Changes apply immediately to this process and to every other process of this environment within
-      <%= status.cache_ttl %> seconds.
-    <% else %>
-      Changes are picked up by browser clients within their own poll interval
-      (<%= Sentrifig.configuration.client_poll_interval %> seconds), with no reload or redeploy.
-    <% end %>
-  </p>
-</div>
+  <%= render "settings", status: status %>
+</section>

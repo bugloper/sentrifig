@@ -20,20 +20,56 @@ export interface SentryEventLike {
 
 export type StateSource = 'default' | 'server' | 'session' | 'fallback';
 
+/** Sentry options the backend is allowed to drive, in its snake_case wire form. */
+export interface SentrifigSettings {
+  sample_rate?: number;
+  traces_sample_rate?: number;
+  replays_session_sample_rate?: number;
+  replays_on_error_sample_rate?: number;
+  send_default_pii?: boolean;
+}
+
 export interface SentrifigState {
   enabled: boolean;
   environment?: string;
   scope?: string;
+  /** Resolved Sentry options from the backend. Empty until the first response. */
+  settings: SentrifigSettings;
   /** Milliseconds this snapshot is trusted for. */
   ttl: number;
   source: StateSource;
 }
 
+/** Request headers, as a plain object. */
+export type HeaderMap = Record<string, string>;
+
 export interface SentrifigOptions {
   /** Absolute or root-relative URL of the gem's state endpoint. */
   url: string;
-  /** Returns the app's auth token, if it has one yet. Called per request. */
+  /**
+   * Sugar for the common case: returns a token, which is sent as
+   * `Authorization: Bearer <token>`. Called per request, so it always sees the
+   * current value. Return null/undefined before login -- a 401 is expected and
+   * handled, not an error.
+   *
+   * If your app does not use bearer tokens, use `headers` instead. If it
+   * authenticates with cookies alone, use neither and leave `credentials` at
+   * its default.
+   */
   getToken?: () => string | null | undefined;
+  /**
+   * Full control over auth headers, for apps that do not use
+   * `Authorization: Bearer`. May be async, for a token that has to be read from
+   * an async store or refreshed first. Merged over anything `getToken`
+   * produced, so it wins on conflict.
+   *
+   *   headers: () => ({ 'X-Auth-Token': session.token })
+   *   headers: async () => ({ Authorization: `Bearer ${await auth.getAccessToken()}` })
+   */
+  headers?: () => HeaderMap | null | undefined | Promise<HeaderMap | null | undefined>;
+  /** Passed to fetch. Defaults to 'include', so cookie-authenticated apps work
+   *  with no token plumbing at all. Cross-origin, this requires the backend to
+   *  allow credentials and echo an explicit origin. */
   credentials?: RequestCredentials;
   /** What to assume before the first successful response. Default true. */
   defaultEnabled?: boolean;
@@ -49,11 +85,27 @@ export interface SentrifigOptions {
   seedMaxAge?: number;
   /** Strip this package's own fetch breadcrumbs from outgoing events. Default true. */
   filterOwnBreadcrumbs?: boolean;
+  /**
+   * Apply the backend's settings (sample rates, PII) to the running Sentry
+   * client. Default true when a client is available.
+   *
+   * Only options the SDK reads after init are sent, so they take effect without
+   * a reload -- with one honest exception: replays_session_sample_rate is
+   * sampled when a session starts, so it applies to new sessions, not open tabs.
+   */
+  applySettings?: boolean;
   onStateChange?: (state: SentrifigState) => void;
   logger?: Pick<Console, 'log' | 'warn'>;
   fetchImpl?: typeof fetch;
   /** Monotonic clock in ms. Injected by tests. */
   now?: () => number;
+}
+
+/** The slice of the Sentry namespace this package touches. Duck-typed so the
+ *  package never imports @sentry/*. */
+export interface SentryLike {
+  getGlobalScope(): { addEventProcessor(processor: unknown): unknown };
+  getClient?(): { getOptions?(): Record<string, unknown> } | undefined;
 }
 
 export interface Sentrifig {
@@ -69,6 +121,8 @@ export interface Sentrifig {
   reset(): void;
   /** Stop refreshing entirely. */
   stop(): void;
+  /** @internal — wired by installGate so settings can reach the live client. */
+  attach(sentry: SentryLike): void;
 }
 
 const STORAGE_PREFIX = 'sentrifig:';
@@ -81,7 +135,17 @@ const DEFAULTS = {
   persist: true,
   seedMaxAge: 300_000,
   filterOwnBreadcrumbs: true,
+  applySettings: true,
   credentials: 'include' as RequestCredentials,
+};
+
+/** Wire name -> the Sentry browser option it drives. */
+const SETTING_TO_OPTION: Record<keyof SentrifigSettings, string> = {
+  sample_rate: 'sampleRate',
+  traces_sample_rate: 'tracesSampleRate',
+  replays_session_sample_rate: 'replaysSessionSampleRate',
+  replays_on_error_sample_rate: 'replaysOnErrorSampleRate',
+  send_default_pii: 'sendDefaultPii',
 };
 
 export function createSentrifig(options: SentrifigOptions): Sentrifig {
@@ -98,7 +162,10 @@ export function createSentrifig(options: SentrifigOptions): Sentrifig {
   const storageKey = STORAGE_PREFIX + o.url;
 
   let state: SentrifigState =
-    readSeed() ?? { enabled: o.defaultEnabled, ttl: o.ttl, source: 'default' };
+    readSeed() ?? { enabled: o.defaultEnabled, settings: {}, ttl: o.ttl, source: 'default' };
+
+  // Set by installGate, so settings can be pushed onto the live client.
+  let sentry: SentryLike | null = null;
   let nextRefreshAt = 0;
   let inFlight: Promise<void> | null = null;
   let consecutiveFailures = 0;
@@ -158,9 +225,18 @@ export function createSentrifig(options: SentrifigOptions): Sentrifig {
 
   async function load(): Promise<void> {
     try {
-      const headers: Record<string, string> = { Accept: 'application/json' };
+      const headers: HeaderMap = { Accept: 'application/json' };
+
       const token = o.getToken?.();
       if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      // Only awaited when actually configured: `await undefined` still costs a
+      // microtask, which would delay the fetch past the caller's turn for every
+      // consumer that does not use this.
+      if (o.headers) {
+        const extra = await o.headers();
+        if (extra) Object.assign(headers, extra);
+      }
 
       const res = await doFetch!(o.url, {
         method: 'GET',
@@ -207,6 +283,7 @@ export function createSentrifig(options: SentrifigOptions): Sentrifig {
       enabled: body['enabled'] as boolean,
       environment: typeof body['environment'] === 'string' ? body['environment'] : undefined,
       scope: typeof body['scope'] === 'string' ? body['scope'] : undefined,
+      settings: readSettings(body['settings']),
       ttl,
       source: 'server',
     };
@@ -220,10 +297,14 @@ export function createSentrifig(options: SentrifigOptions): Sentrifig {
     consecutiveFailures = 0;
     failureLogged = false;
 
-    const changed = state.enabled !== next.enabled || state.source !== next.source;
+    const settingsChanged = JSON.stringify(state.settings) !== JSON.stringify(next.settings);
+    const changed = state.enabled !== next.enabled || state.source !== next.source || settingsChanged;
+
     state = next;
     writeSeed(next);
     defer(ttl);
+
+    if (settingsChanged) applySettings(next.settings);
 
     if (changed) {
       try {
@@ -258,7 +339,7 @@ export function createSentrifig(options: SentrifigOptions): Sentrifig {
   }
 
   function reset(): void {
-    state = { enabled: o.defaultEnabled, ttl: o.ttl, source: 'default' };
+    state = { enabled: o.defaultEnabled, settings: {}, ttl: o.ttl, source: 'default' };
     consecutiveFailures = 0;
     failureLogged = false;
     nextRefreshAt = 0;
@@ -267,6 +348,48 @@ export function createSentrifig(options: SentrifigOptions): Sentrifig {
 
   function stop(): void {
     stopped = true;
+  }
+
+  /** Ignores anything that is not a number or boolean, so a malformed or
+   *  future field cannot put junk into the SDK's options. */
+  function readSettings(raw: unknown): SentrifigSettings {
+    if (!raw || typeof raw !== 'object') return {};
+
+    const source = raw as Record<string, unknown>;
+    const settings: Record<string, unknown> = {};
+
+    (Object.keys(SETTING_TO_OPTION) as Array<keyof SentrifigSettings>).forEach((key) => {
+      const value = source[key];
+      const wanted = key === 'send_default_pii' ? 'boolean' : 'number';
+      if (typeof value === wanted) settings[key] = value;
+    });
+
+    return settings as SentrifigSettings;
+  }
+
+  /** Mutates the live client options. Sentry reads sampleRate per event and
+   *  tracesSampleRate per span, and mutates its own options this way
+   *  internally, so this takes effect without a reload. */
+  function applySettings(settings: SentrifigSettings): void {
+    if (!o.applySettings || !sentry?.getClient) return;
+
+    try {
+      const options = sentry.getClient()?.getOptions?.();
+      if (!options) return;
+
+      (Object.keys(settings) as Array<keyof SentrifigSettings>).forEach((key) => {
+        const option = SETTING_TO_OPTION[key];
+        if (option) options[option] = settings[key];
+      });
+    } catch (err) {
+      log.warn('[sentrifig] could not apply settings to the Sentry client:', err);
+    }
+  }
+
+  /** @internal — called by installGate. */
+  function attach(client: SentryLike): void {
+    sentry = client;
+    if (Object.keys(state.settings).length > 0) applySettings(state.settings);
   }
 
   // --- sessionStorage seed --------------------------------------------------
@@ -313,7 +436,7 @@ export function createSentrifig(options: SentrifigOptions): Sentrifig {
     }
   }
 
-  return { eventProcessor, enabled, state: () => state, refresh, reset, stop };
+  return { eventProcessor, enabled, state: () => state, refresh, reset, stop, attach };
 }
 
 /**
@@ -325,11 +448,9 @@ export function createSentrifig(options: SentrifigOptions): Sentrifig {
  * events, are read at event time, and survive a re-init. (The isolation-scope
  * `Sentry.addEventProcessor` is NOT equivalent.)
  */
-export function installGate(
-  sentry: { getGlobalScope(): { addEventProcessor(processor: unknown): unknown } },
-  instance: Sentrifig,
-): void {
+export function installGate(sentry: SentryLike, instance: Sentrifig): void {
   sentry.getGlobalScope().addEventProcessor(instance.eventProcessor);
+  instance.attach(sentry);
 }
 
 function word(enabled: boolean): string {

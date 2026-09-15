@@ -1,17 +1,12 @@
-<p class="env-line">Environment: <span class="env"><%= Sentrifig.current_environment %></span></p>
+<% sdk = @statuses.first %>
+<% content_for :sdk do %>
+  <% if sdk.sdk_ready? %>
+    <span class="dot ok"></span>SDK ready to send
+  <% else %>
+    <span class="dot off"></span>SDK not sending: <%= Array(sdk.sdk_problems).join("; ") %>
+  <% end %>
+<% end %>
 
-<%= render partial: "switch", collection: @statuses, as: :status %>
-
-<div class="card">
-  <h2>Sentry SDK (this process)</h2>
-  <p class="meta">
-    <% sdk = @statuses.first %>
-    <% if sdk.sdk_ready? %>
-      Ready: the SDK is configured to send from this deployment.
-    <% else %>
-      Not sending from this deployment regardless of the backend switch:
-      <%= Array(sdk.sdk_problems).join("; ") %>.
-    <% end %>
-    The frontend switch is unaffected by this &mdash; it gates browser SDKs, which have their own DSN.
-  </p>
+<div class="scopes">
+  <%= render partial: "switch", collection: @statuses, as: :status %>
 </div>

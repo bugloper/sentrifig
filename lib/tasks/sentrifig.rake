@@ -109,6 +109,63 @@ namespace :sentrifig do
     puts "#{scope.capitalize} Sentry: DISABLED"
   end
 
+  desc "List the runtime settings for a scope (backend [default] or frontend), with their origin"
+  task :settings, [:scope] => :environment do |_task, args|
+    scope = sentrifig_scope(args[:scope])
+    status = Sentrifig.status(scope)
+
+    puts "Environment: #{status.environment}"
+    puts "Scope: #{scope}"
+    puts ""
+
+    Sentrifig::Settings::Schema.for_scope(scope).each do |definition|
+      value = status.settings[definition.key]
+      origin =
+        if status.overridden?(definition.key)
+          "set here"
+        elsif definition.env_present?
+          "default from #{definition.env}"
+        else
+          "default"
+        end
+
+      puts format("  %-28s %-34s %s", definition.key, definition.to_display(value).inspect, "(#{origin})")
+      puts format("  %-28s %s", "", definition.note) if definition.note
+    end
+
+    puts ""
+    puts "Change one with: bin/rails \"sentrifig:set[#{scope},<key>,<value>]\""
+    puts "Reset one with:  bin/rails \"sentrifig:reset[#{scope},<key>]\""
+  end
+
+  desc "Set one runtime setting: sentrifig:set[scope,key,value]"
+  task :set, %i[scope key value] => :environment do |_task, args|
+    scope = sentrifig_scope(args[:scope])
+    abort("sentrifig: a key is required, e.g. sentrifig:set[#{scope},sample_rate,0.5]") if args[:key].to_s.empty?
+
+    begin
+      Sentrifig.update_settings!(scope, { args[:key].to_sym => args[:value] }, by: "rake")
+    rescue Sentrifig::ValidationError => e
+      abort("sentrifig: #{e.message}")
+    end
+
+    puts "#{scope} #{args[:key]} = #{Sentrifig.settings(scope)[args[:key].to_sym].inspect}"
+  end
+
+  desc "Reset one runtime setting to its default: sentrifig:reset[scope,key]"
+  task :reset, %i[scope key] => :environment do |_task, args|
+    scope = sentrifig_scope(args[:scope])
+    abort("sentrifig: a key is required, e.g. sentrifig:reset[#{scope},sample_rate]") if args[:key].to_s.empty?
+
+    begin
+      Sentrifig.reset_setting!(scope, args[:key], by: "rake")
+    rescue Sentrifig::ValidationError => e
+      abort("sentrifig: #{e.message}")
+    end
+
+    puts "#{scope} #{args[:key]} reset to #{Sentrifig.settings(scope)[args[:key].to_sym].inspect}"
+  end
+
   desc "Capture a test event and report whether the runtime switch and the Sentry SDK let it through"
   task test_event: :environment do
     status = Sentrifig.status

@@ -1,0 +1,61 @@
+<h3>Settings</h3>
+
+<%= form_with url: scoped_settings_path(scope: status.scope), method: :post, local: true do %>
+  <% Sentrifig::Settings::Schema.for_scope(status.scope).each do |definition| %>
+    <% value = status.settings[definition.key] %>
+    <% overridden = status.overridden?(definition.key) %>
+    <% field_id = "#{status.scope}_#{definition.key}" %>
+
+    <div class="<%= class_names("setting", overridden: overridden, multiline: definition.multiline?) %>">
+      <div class="setting-name">
+        <label for="<%= field_id %>"><%= definition.key %></label>
+        <div class="origin">
+          <% if overridden %>
+            set here<%#
+              A submit button with formaction posts this same form to the reset
+              path. No nested form, and the CSRF token comes along already. %>
+            <%= button_tag "reset", type: "submit", class: "btn link",
+                           formaction: scoped_setting_reset_path(scope: status.scope, key: definition.key),
+                           name: "reset_#{definition.key}" %>
+          <% elsif definition.env_present? %>
+            default from <%= definition.env %>
+          <% else %>
+            default
+          <% end %>
+        </div>
+      </div>
+
+      <div class="setting-value">
+        <% if definition.boolean? %>
+          <%# The hidden field is what makes an unchecked box submit `false`
+              rather than nothing at all. %>
+          <input type="hidden" name="settings[<%= definition.key %>]" value="false">
+          <input type="checkbox" id="<%= field_id %>" name="settings[<%= definition.key %>]"
+                 value="true" <%= "checked" if value %>>
+        <% elsif definition.multiline? %>
+          <textarea id="<%= field_id %>" name="settings[<%= definition.key %>]"
+                    rows="<%= definition.rows_for(value) %>" spellcheck="false"
+                    placeholder="one per line"><%= definition.to_form(value) %></textarea>
+          <p class="count"><%= pluralize(Array(value).size, "entry", plural: "entries") %>, one per line</p>
+        <% else %>
+          <input type="<%= definition.input_type %>" id="<%= field_id %>"
+                 name="settings[<%= definition.key %>]"
+                 value="<%= definition.to_form(value) %>"
+                 <% if definition.step %>step="<%= definition.step %>"<% end %>
+                 <% if definition.range %>min="<%= definition.range.first %>" max="<%= definition.range.last %>"<% end %>
+                 <% if definition.list? %>placeholder="one per line"<% end %>>
+        <% end %>
+      </div>
+
+      <p class="setting-help">
+        <%= definition.description %>
+        <% if definition.range %><span class="constraint"><%= definition.range.first %>&ndash;<%= definition.range.last %></span><% end %>
+        <% if definition.note %><span class="note"><%= definition.note %></span><% end %>
+      </p>
+    </div>
+  <% end %>
+
+  <div class="scope-actions">
+    <%= submit_tag "Save #{status.scope} settings", class: "btn primary" %>
+  </div>
+<% end %>

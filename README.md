@@ -40,7 +40,8 @@ Sentry Status
 6. [Mounting the engine](#mounting-the-engine)
 7. [Authentication](#authentication)
 8. [Enabling and disabling Sentry](#enabling-and-disabling-sentry)
-9. [Browser clients (the frontend switch)](#browser-clients-the-frontend-switch)
+9. [Settings](#settings)
+10. [Browser clients (the frontend switch)](#browser-clients-the-frontend-switch)
 10. [Runtime behaviour: what "disabled" means](#runtime-behaviour-what-disabled-means)
 11. [Default behaviour](#default-behaviour)
 12. [Multi-process behaviour and caching](#multi-process-behaviour-and-caching)
@@ -346,6 +347,107 @@ rather than quietly falling back to the backend.
 `enable!`/`disable!` raise `Sentrifig::PersistenceError` (with `#cause`) if
 the row cannot be written; the previous state stays in effect.
 
+## Settings
+
+Each switch has a set of runtime settings below it on the dashboard, listed with
+their current value and where it came from. They can be edited in place, by rake
+task, or through the Ruby API, and they take effect for the next event — no
+restart, no deploy.
+
+```
+sample_rate            0.25    set here                0.0–1.0
+traces_sample_rate     1.0     default                 0.0–1.0
+send_default_pii       false   default from SENTRY_PII_ENABLE
+max_breadcrumbs        50      default                 0–100
+excluded_exceptions    ...     default
+```
+
+### What is in the list, and what is deliberately not
+
+**Only options the SDK reads after initialisation.** That is the whole
+inclusion rule, and it is not a detail: an option captured when the client is
+built would render as an editable field and then do nothing, which is worse than
+having no field at all.
+
+Verified against sentry-ruby 7.0.0 and `@sentry/core` 9.47.1:
+
+| In | Why |
+| --- | --- |
+| `sample_rate`, `traces_sample_rate`, `send_default_pii`, `max_breadcrumbs`, `include_local_variables`, `excluded_exceptions`, `enabled_environments`, `release` | `Configuration#sample_allowed?`, `#sending_allowed?` and `#excluded_exception?` are called per event against the live configuration object. |
+
+| Out | Why |
+| --- | --- |
+| `dsn` | The transport is built from it in `Client#initialize`. Changing it afterwards moves the displayed value and nothing else. |
+| `breadcrumbs_logger`, `enabled_patches` | Applied once, at `Sentry.init`. |
+| `debug` | Binds the SDK logger at init. |
+
+Those remain environment variables, changed by a deploy.
+
+### Where a value comes from
+
+Three layers, in order:
+
+1. **A stored override** — what an operator set here. It wins, and keeps winning
+   across deploys until it is reset.
+2. **The baseline** — what the application itself configured: the environment
+   variables in [Sentry defaults](#sentry-defaults) plus any
+   `config.sentry { }` blocks. This is what "default" means on the page, and
+   what *Reset* restores. It is captured once, before any override is applied,
+   so an app's own configuration is never quietly replaced by the gem's literal
+   defaults.
+3. **The schema default**, if Sentry is not initialised.
+
+The consequence worth knowing: once a setting is overridden here, changing its
+environment variable in a configmap has no effect until the override is reset.
+The dashboard says `set here` for exactly those settings, so the drift is
+visible rather than mysterious.
+
+### Validation
+
+List settings (`excluded_exceptions`, `enabled_environments`) are edited one
+entry per line in a monospace field sized to their content, because 24 class
+names on a single comma-separated line is unreadable. Commas still parse, in any
+mix with newlines, so pasting a value from a configmap or an older version does
+the obvious thing.
+
+There is deliberately **no syntax highlighting**: a `<textarea>` renders plain
+text, so every approach to colouring it needs JavaScript, and this page ships
+none. That is a considered trade for a surface that can silence error reporting
+— no supply-chain surface, and nothing for a host's CSP to allow.
+
+Every setting declares its type, its range and its permitted values once, in
+`Sentrifig::Settings::Schema`. That one declaration drives the form inputs (a
+number field with `min`/`max` for a rate, a checkbox for a boolean), the server-
+side validation, the rake tasks and the Ruby API — so a bad value is rejected
+identically however it arrives, and rejected *whole*: one invalid field saves
+nothing rather than half the form.
+
+```ruby
+Sentrifig.settings                                   # => {sample_rate: 0.25, ...}
+Sentrifig.settings(Sentrifig::Scope::FRONTEND)
+Sentrifig.update_settings!(:backend, { sample_rate: "0.25" }, by: "alice")
+Sentrifig.reset_setting!(:backend, :sample_rate, by: "alice")
+```
+
+`update_settings!` raises `Sentrifig::ValidationError` naming every failing key.
+
+```bash
+$ bin/rails sentrifig:settings              # list, with origins
+$ bin/rails "sentrifig:settings[frontend]"
+$ bin/rails "sentrifig:set[backend,sample_rate,0.25]"
+$ bin/rails "sentrifig:reset[backend,sample_rate]"
+```
+
+### Frontend settings
+
+The frontend scope has its own set — browser sampling rates and session replay
+rates — served by the state endpoint and applied by `sentrifig-browser` to the
+running client. The browser SDK reads `sampleRate` per event and
+`tracesSampleRate` per span from its live options object, so those take effect
+without a reload. `replays_session_sample_rate` is the one honest exception: it
+is sampled when a session begins, so it applies to new sessions rather than open
+tabs, and the dashboard says so.
+
 ## Browser clients (the frontend switch)
 
 The `frontend` scope is not read by this process at all. It is published over
@@ -426,6 +528,9 @@ native Basic-auth dialog.
 
 ### Wiring a browser app
 
+The step-by-step version, including the Angular and React bootstrap, CORS and ingress, and how to
+verify the switch end to end, is in [clients/browser/INSTALL.md](clients/browser/INSTALL.md).
+
 ```ts
 import * as Sentry from '@sentry/browser';
 import { createSentrifig, installGate } from 'sentrifig-browser';
@@ -434,7 +539,7 @@ Sentry.init({ dsn: '…' });
 
 installGate(Sentry, createSentrifig({
   url: '/sentrifig/state',
-  getToken: () => localStorage.getItem('authToken'),
+  getToken: () => myAuth.accessToken,   // or omit entirely for cookie auth
 }));
 ```
 
@@ -717,6 +822,12 @@ Helpers: `sentry_events` and `last_sentry_event` (from Sentry),
 `test/dummy` is a minimal Rails app that mounts the engine and exposes a few
 demo routes. It records Sentry events in-process (DummyTransport) unless you
 set `SENTRY_DSN`.
+
+> **Restart the server after editing anything under `lib/`.** The engine's
+> `app/` directory is autoloaded and reloads on every request, but `lib/` is
+> required once at boot. Editing both and reloading the page gives you a new
+> view calling an old class — typically `NoMethodError` for a method you can see
+> in the file in front of you.
 
 ```bash
 cd test/dummy

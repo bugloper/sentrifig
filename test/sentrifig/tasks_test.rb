@@ -133,5 +133,52 @@ module Sentrifig
       assert Sentrifig.enabled?
       assert_equal 0, Setting.count
     end
+
+    test "settings lists every setting with its origin" do
+      Sentrifig.update_settings!(Scope::BACKEND, { sample_rate: "0.5" }, by: "alice")
+
+      output = run_task("sentrifig:settings")
+
+      assert_match(/sample_rate\s+"?0\.5"?\s+\(set here\)/, output)
+      assert_match(/max_breadcrumbs\s+50\s+\(default\)/, output)
+    end
+
+    test "settings takes a scope" do
+      output = run_task("sentrifig:settings", "frontend")
+
+      assert_includes output, "Scope: frontend"
+      assert_includes output, "replays_session_sample_rate"
+      assert_not_includes output, "excluded_exceptions"
+    end
+
+    test "set stores a value through the schema" do
+      output = run_task("sentrifig:set", "backend", "sample_rate", "0.25")
+
+      assert_includes output, "backend sample_rate = 0.25"
+      assert_in_delta 0.25, Sentrifig.settings[:sample_rate]
+    end
+
+    test "set refuses an invalid value and writes nothing" do
+      output = run_task("sentrifig:set", "backend", "sample_rate", "7")
+
+      assert_match(/must be between 0.0 and 1.0/, output)
+      assert_equal 0, Setting.count
+    end
+
+    test "set refuses an unknown key" do
+      output = run_task("sentrifig:set", "backend", "nonsense", "1")
+
+      assert_match(/is not a setting for the backend scope/, output)
+      assert_equal 0, Setting.count
+    end
+
+    test "reset restores the default" do
+      Sentrifig.update_settings!(Scope::BACKEND, { sample_rate: "0.5" }, by: "alice")
+
+      output = run_task("sentrifig:reset", "backend", "sample_rate")
+
+      assert_includes output, "reset to 1.0"
+      assert_empty Sentrifig.runtime(Scope::BACKEND).overridden_keys
+    end
   end
 end

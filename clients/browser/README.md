@@ -15,6 +15,10 @@ coupling is a structural type, so this package never has to track Sentry's major
 npm install sentrifig-browser
 ```
 
+**New to this?** [INSTALL.md](INSTALL.md) is the step-by-step guide: backend prerequisites,
+Angular and React bootstrap, making the endpoint reachable, and how to verify the switch actually
+works end to end.
+
 ## Use
 
 ```ts
@@ -25,7 +29,7 @@ Sentry.init({ dsn: '…' });
 
 const sentrifig = createSentrifig({
   url: '/sentrifig/state',
-  getToken: () => localStorage.getItem('authToken'),
+  getToken: () => myAuth.accessToken,   // or omit entirely for cookie auth
 });
 
 installGate(Sentry, sentrifig);
@@ -75,19 +79,36 @@ It mirrors the gem's data plane deliberately.
 Disabling stops *delivery*, not *instrumentation*: breadcrumbs, tags and spans keep accumulating,
 so the first event after re-enabling carries full context.
 
+### Settings, not just on/off
+
+The backend also serves a small set of Sentry options — `sample_rate`,
+`traces_sample_rate`, `replays_session_sample_rate`, `replays_on_error_sample_rate` and
+`send_default_pii` — and this package applies them to the live client. Sentry reads `sampleRate`
+per event and `tracesSampleRate` per span from its options object, and mutates that object itself
+internally, so these take effect without a reload.
+
+One honest exception: `replays_session_sample_rate` is sampled when a session *starts*, so it
+applies to new sessions rather than tabs that are already open.
+
+Values of the wrong type are ignored rather than written into the SDK's options, so a malformed or
+future field cannot poison the client. Pass `applySettings: false` to take the switch and manage the
+options yourself.
+
 ## Options
 
 | Option | Default | |
 |---|---|---|
 | `url` | — | Required. The gem's state endpoint, absolute or root-relative. |
-| `getToken` | — | Returns your app's auth token. Called per request; may return `null` before login. |
-| `credentials` | `'include'` | Passed to `fetch`. |
+| `getToken` | — | Sugar for `Authorization: Bearer <token>`. Called per request; may return `null` before login. |
+| `headers` | — | Full control over auth headers, for any other scheme. May be async. Merged over `getToken`. |
+| `credentials` | `'include'` | Passed to `fetch`, so cookie-authenticated apps need no token plumbing at all. |
 | `defaultEnabled` | `true` | What to assume before the first successful response. |
 | `ttl` | `60_000` | Fallback, in ms. The server's `poll_interval` wins. |
 | `unauthenticatedTtl` | `60_000` | Wait after a 401/403. |
 | `maxBackoff` | `300_000` | Ceiling for the failure backoff. |
 | `persist` / `seedMaxAge` | `true` / `300_000` | The `sessionStorage` seed. |
 | `filterOwnBreadcrumbs` | `true` | Strip this package's own fetch breadcrumbs. |
+| `applySettings` | `true` | Apply the backend's Sentry options (sampling rates, PII) to the running client. |
 | `onStateChange` | — | Called when the state actually changes. |
 | `logger`, `fetchImpl`, `now` | — | Injection points, mostly for tests. |
 
@@ -99,7 +120,7 @@ so the first event after re-enabling carries full context.
   close the post-login blind spot.
 - `reset()` returns to the default and clears the seed. Call it on logout so the next user does not
   inherit the previous one's state.
-- `state()` returns `{ enabled, environment, scope, ttl, source }` where `source` is
+- `state()` returns `{ enabled, environment, scope, settings, ttl, source }` where `source` is
   `'default' | 'server' | 'session' | 'fallback'` — `'fallback'` means the endpoint is unreachable
   and this value is stale.
 

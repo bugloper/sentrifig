@@ -86,7 +86,7 @@ module Sentrifig
       get "/sentrifig/state"
 
       assert_response :success
-      assert_equal %w[enabled environment poll_interval scope source], json.keys.sort
+      assert_equal %w[enabled environment poll_interval scope settings source], json.keys.sort
     end
 
     test "never leaks the operator username, timestamps, or SDK diagnostics" do
@@ -110,6 +110,28 @@ module Sentrifig
 
       assert_match %r{\Aapplication/json}, response.media_type || response.content_type
       assert_equal "no-store", response.headers["Cache-Control"]
+    end
+
+    test "carries the frontend settings, and only those" do
+      configure_sentrifig(client_authenticator: ALLOW)
+
+      get "/sentrifig/state"
+
+      expected = Settings::Schema.keys(Scope::FRONTEND).map(&:to_s).sort
+      assert_equal expected, json["settings"].keys.sort
+      assert_equal 1.0, json["settings"]["sample_rate"]
+      # Backend-only settings must never reach a browser.
+      assert_not_includes json["settings"].keys, "excluded_exceptions"
+      assert_not_includes json["settings"].keys, "include_local_variables"
+    end
+
+    test "reflects a stored frontend setting override" do
+      configure_sentrifig(client_authenticator: ALLOW)
+      Sentrifig.update_settings!(Scope::FRONTEND, { sample_rate: "0.25" }, by: "operator")
+
+      get "/sentrifig/state"
+
+      assert_equal 0.25, json["settings"]["sample_rate"]
     end
 
     test "publishes the configured poll interval, not cache_ttl" do

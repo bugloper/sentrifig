@@ -27,7 +27,8 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "INSTALL.md"
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --target es2017 --clean",
