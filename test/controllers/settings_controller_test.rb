@@ -134,7 +134,8 @@ module Sentrifig
       assert_select "form[action=?]", "/sentrifig/frontend/settings"
       assert_select "input[name=?][type=?]", "settings[sample_rate]", "number"
       assert_select "input[name=?][type=?]", "settings[send_default_pii]", "checkbox"
-      assert_select "input[name=?][type=?]", "settings[excluded_exceptions]", "text"
+      # A 20-entry list is unreadable in a one-line input.
+      assert_select "textarea[name=?]", "settings[excluded_exceptions]"
       # Bounds reach the browser as well as the server.
       assert_select "input[name=?][min=?][max=?]", "settings[sample_rate]", "0.0", "1.0"
       assert_select "input[name=?][max=?]", "settings[max_breadcrumbs]", "100"
@@ -145,8 +146,11 @@ module Sentrifig
 
       get "/sentrifig", headers: basic_auth
 
-      assert_select "tr.overridden th label", "sample_rate"
-      assert_select "form[action=?]", "/sentrifig/backend/settings/sample_rate/reset"
+      assert_select ".setting.overridden label", "sample_rate"
+      # The reset is a submit button with formaction, so it lives inside the
+      # settings form rather than nesting a second form inside it.
+      assert_select "button[formaction=?]", "/sentrifig/backend/settings/sample_rate/reset"
+      assert_select "form form", count: 0, message: "nested forms are invalid HTML"
     end
 
     test "a setting following an environment variable says so" do

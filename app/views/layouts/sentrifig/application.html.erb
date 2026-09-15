@@ -7,63 +7,123 @@
   <title>Sentrifig</title>
   <%= csrf_meta_tags %>
   <style>
-    :root { color-scheme: light; }
+    :root {
+      color-scheme: light;
+      --ink: #1f2933; --muted: #616e7c; --faint: #7b8794;
+      --line: #dde1e6; --hair: #eef0f3; --paper: #fff; --ground: #f4f5f7;
+      --go: #2f855a; --go-bg: #f0fff4; --stop: #c53030; --stop-bg: #fff5f5; --warn: #975a16;
+    }
     * { box-sizing: border-box; }
     body {
-      margin: 0; padding: 2rem 1rem; background: #f4f5f7; color: #1f2933;
+      margin: 0; background: var(--ground); color: var(--ink);
       font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
-    main { max-width: 46rem; margin: 0 auto; }
-    h1 { font-size: 1.4rem; margin: 0 0 1.5rem; }
-    h2 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: .06em; color: #616e7c; margin: 1.5rem 0 .5rem; }
-    .card + .card { margin-top: 1rem; }
-    .env-line { margin: 0 0 1rem; }
-    .card { background: #fff; border: 1px solid #d9dde3; border-radius: 8px; padding: 1.5rem; }
+    main { max-width: 110rem; margin: 0 auto; padding: 1.5rem 1.5rem 3rem; }
+
+    /* --- page header: identity, environment and SDK state on one line ------ */
+    .topbar {
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem 1rem;
+      padding-bottom: .9rem; margin-bottom: 1.25rem; border-bottom: 1px solid var(--line);
+    }
+    h1 { font-size: 1.15rem; margin: 0; letter-spacing: -.01em; }
     .env { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; }
-    .status {
-      border: 2px solid; border-radius: 6px; padding: 1.25rem; text-align: center;
-      font-size: 1.6rem; font-weight: 700; letter-spacing: .08em;
+    .topbar .sdk { margin-left: auto; font-size: .85rem; color: var(--muted); }
+    .dot { display: inline-block; width: .5rem; height: .5rem; border-radius: 50%; margin-right: .35rem; }
+    .dot.ok { background: var(--go); } .dot.off { background: var(--faint); }
+
+    /* --- the two scopes, side by side while there is room ----------------- */
+    .scopes { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fit, minmax(33rem, 1fr)); align-items: start; }
+    .card { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 1.25rem 1.35rem; }
+
+    .scope-head { display: flex; align-items: flex-start; gap: 1rem; }
+    .scope-head h2 { font-size: 1rem; margin: 0; }
+    .scope-head .sub { margin: .15rem 0 0; font-size: .85rem; color: var(--muted); }
+    .scope-state { margin-left: auto; display: flex; align-items: center; gap: .6rem; flex-shrink: 0; }
+    .pill {
+      font-size: .7rem; font-weight: 700; letter-spacing: .08em; padding: .25rem .55rem;
+      border-radius: 999px; border: 1px solid;
     }
-    .status.enabled  { border-color: #2f855a; color: #22543d; background: #f0fff4; }
-    .status.disabled { border-color: #c53030; color: #742a2a; background: #fff5f5; }
-    .meta { color: #616e7c; font-size: .9rem; margin: .75rem 0 0; }
-    h3 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: #616e7c; margin: 1.5rem 0 .5rem; }
-    table.settings { width: 100%; border-collapse: collapse; font-size: .9rem; }
-    table.settings th { text-align: left; font-weight: 600; vertical-align: top; padding: .5rem .75rem .5rem 0; width: 13rem; }
-    table.settings td { vertical-align: top; padding: .5rem 0; }
-    table.settings tr + tr th, table.settings tr + tr td { border-top: 1px solid #eef0f3; }
-    table.settings tr.overridden th { border-left: 3px solid #2f855a; padding-left: .5rem; }
-    table.settings input[type=text], table.settings input[type=number] {
-      width: 100%; padding: .35rem .5rem; border: 1px solid #d9dde3; border-radius: 4px; font: inherit;
+    .pill.enabled  { color: var(--go); background: var(--go-bg); border-color: #9ae6b4; }
+    .pill.disabled { color: var(--stop); background: var(--stop-bg); border-color: #feb2b2; }
+    .scope-state form { margin: 0; }
+    .meta { color: var(--muted); font-size: .82rem; margin: .7rem 0 0; }
+    .meta.degraded { color: var(--warn); }
+
+    /* --- settings --------------------------------------------------------- */
+    h3 {
+      font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; color: var(--faint);
+      margin: 1.4rem 0 .25rem; padding-top: .9rem; border-top: 1px solid var(--line);
     }
-    td.value { width: 11rem; }
-    td.help { color: #616e7c; padding-left: .75rem; }
-    .origin { display: block; font-weight: 400; font-size: .75rem; color: #7b8794; }
-    tr.overridden .origin { color: #2f855a; }
-    .constraint { display: inline-block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .75rem; }
-    .note { display: block; font-size: .8rem; color: #975a16; margin-top: .25rem; }
-    .resets { display: flex; flex-wrap: wrap; gap: .5rem; }
-    .resets form { margin: 0; }
-    .btn.small { width: auto; padding: .35rem .7rem; font-size: .8rem; background: #616e7c; }
-    .actions { margin-top: 1.5rem; }
+    .setting {
+      display: grid; grid-template-columns: minmax(9rem, 1.1fr) minmax(7rem, 1fr);
+      gap: .2rem .9rem; padding: .65rem 0; border-top: 1px solid var(--hair);
+    }
+    .setting:first-of-type { border-top: 0; }
+    .setting.overridden { box-shadow: inset 2px 0 0 var(--go); padding-left: .6rem; margin-left: -.6rem; }
+    .setting label { font-weight: 600; font-size: .88rem; word-break: break-word; }
+    .origin { font-size: .72rem; color: var(--faint); }
+    .setting.overridden .origin { color: var(--go); }
+    .setting-value { grid-column: 2; grid-row: 1 / span 2; align-self: start; }
+    .setting-help { grid-column: 1 / -1; font-size: .8rem; color: var(--muted); margin-top: .15rem; }
+    .constraint { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .75rem; color: var(--faint); }
+    .note { display: block; color: var(--warn); margin-top: .1rem; }
+
+    input[type=text], input[type=number], textarea {
+      width: 100%; padding: .4rem .55rem; border: 1px solid var(--line); border-radius: 6px;
+      font: inherit; font-size: .88rem; background: #fff;
+    }
+    /* An explicit line-height, or `rows` lands on a fraction of a line and the
+       last one is sliced in half. */
+    textarea {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem;
+      line-height: 1.5; resize: vertical; display: block;
+    }
+    /* A long list needs the full row, not the narrow value column. */
+    .setting.multiline { grid-template-columns: 1fr; }
+    .setting.multiline .setting-value { grid-column: 1; grid-row: auto; }
+    input[type=text]:focus, input[type=number]:focus, textarea:focus { outline: 2px solid #90cdf4; outline-offset: -1px; border-color: #90cdf4; }
+    input[type=checkbox] { width: 1.05rem; height: 1.05rem; margin: .35rem 0 0; accent-color: var(--go); }
+
+    /* --- buttons ---------------------------------------------------------- */
     .btn {
-      display: inline-block; width: 100%; padding: .8rem 1rem; border: 0; border-radius: 6px;
-      font: inherit; font-weight: 600; cursor: pointer; color: #fff;
+      display: inline-block; padding: .45rem .9rem; border: 1px solid transparent; border-radius: 6px;
+      font: inherit; font-size: .85rem; font-weight: 600; cursor: pointer; color: #fff; background: var(--muted);
     }
-    .btn.danger  { background: #c53030; }
-    .btn.primary { background: #2f855a; }
-    .btn:hover { filter: brightness(.95); }
-    .flash { border-radius: 6px; padding: .75rem 1rem; margin-bottom: 1rem; }
+    .btn.danger  { background: var(--stop); }
+    .btn.primary { background: var(--go); }
+    .btn:hover { filter: brightness(.94); }
+    .scope-actions { margin-top: 1.1rem; padding-top: .9rem; border-top: 1px solid var(--line); }
+    /* A submit button with formaction: posts this form to the reset path, so
+       there is no nested form and the CSRF token comes along for free. */
+    .btn.link {
+      background: none; border: 0; color: var(--go); font-size: .72rem; font-weight: 600;
+      padding: 0 0 0 .4rem; cursor: pointer; text-decoration: underline;
+    }
+
+    .flash { border-radius: 8px; padding: .7rem 1rem; margin-bottom: 1rem; font-size: .9rem; }
     .flash.notice { background: #e6fffa; color: #234e52; border: 1px solid #81e6d9; }
-    .flash.alert  { background: #fff5f5; color: #742a2a; border: 1px solid #feb2b2; }
-    footer { color: #7b8794; font-size: .8rem; margin-top: 1.5rem; text-align: center; }
+    .flash.alert  { background: var(--stop-bg); color: #742a2a; border: 1px solid #feb2b2; }
+    footer { color: var(--faint); font-size: .78rem; margin-top: 1.75rem; }
+
+    /* Narrow screens: one column, and each setting stacks. */
+    @media (max-width: 40rem) {
+      main { padding: 1rem .9rem 2rem; }
+      .setting { grid-template-columns: 1fr; }
+      .setting-value { grid-column: 1; grid-row: auto; }
+      .scope-head { flex-wrap: wrap; }
+      .scope-state { margin-left: 0; width: 100%; }
+    }
   </style>
 </head>
 <body>
   <main>
-    <h1>Sentrifig</h1>
-    <% if notice %><div class="flash notice" role="status"><%= notice %></div><% end %>
-    <% if alert %><div class="flash alert" role="alert"><%= alert %></div><% end %>
+    <div class="topbar">
+      <h1>Sentrifig</h1>
+      <span>Environment: <span class="env"><%= Sentrifig.current_environment %></span></span>
+      <span class="sdk"><%= yield :sdk %></span>
+    </div>
+    <% if flash[:notice] %><div class="flash notice"><%= flash[:notice] %></div><% end %>
+    <% if flash[:alert] %><div class="flash alert"><%= flash[:alert] %></div><% end %>
     <%= yield %>
     <footer>sentrifig <%= Sentrifig::VERSION %></footer>
   </main>

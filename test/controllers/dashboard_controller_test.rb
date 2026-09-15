@@ -62,26 +62,25 @@ module Sentrifig
       assert_response :success
       assert_select "h1", "Sentrifig"
       assert_select ".env", "test"
-      assert_select ".status.enabled", text: "ENABLED"
+      assert_select ".pill.enabled", text: "ENABLED"
       assert_select "form[action=?][method=post]", "/sentrifig/backend/disable" do
         assert_select "button", "Disable backend Sentry"
       end
       assert_select "form[action=?]", "/sentrifig/backend/enable", count: 0
       assert_equal "no-store", response.headers["Cache-Control"]
-      assert_match(/SDK is configured to send/, response.body)
+      assert_select ".sdk", /SDK ready to send/
     end
 
     test "dashboard says when the SDK itself cannot send" do
       Sentry.configuration.dsn = nil
       get "/sentrifig", headers: basic_auth
-      assert_match(/Not sending from this deployment regardless of the backend switch:\s*DSN not set or not valid/,
-                   response.body)
+      assert_select ".sdk", /SDK not sending: DSN not set or not valid/
     end
 
     test "dashboard shows DISABLED status and the enable button" do
       Sentrifig.disable!(by: "alice")
       get "/sentrifig", headers: basic_auth
-      assert_select ".status.disabled", text: "DISABLED"
+      assert_select ".pill.disabled", text: "DISABLED"
       assert_select "form[action=?]", "/sentrifig/backend/enable"
       assert_match(/by alice/, response.body)
     end
@@ -97,8 +96,8 @@ module Sentrifig
         get "/sentrifig", headers: basic_auth
       end
       assert_response :success
-      assert_select ".status.enabled"
-      assert_match(/database is currently unreachable/, response.body)
+      assert_select ".pill.enabled"
+      assert_match(/database is unreachable/, response.body)
       assert_no_match(/ConnectionNotEstablished/, response.body)
     end
 
@@ -112,7 +111,7 @@ module Sentrifig
 
       follow_redirect!(headers: basic_auth)
       assert_select ".flash.notice", /Sentry disabled for test/
-      assert_select ".status.disabled"
+      assert_select ".pill.disabled"
     end
 
     test "POST enable turns Sentry back on" do

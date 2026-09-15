@@ -84,6 +84,9 @@ module Sentrifig
 
       def boolean? = @type == :boolean
       def list? = @type == :string_list
+      # Lists are long (excluded_exceptions ships 20+ entries), so a single-line
+      # input truncates them to uselessness. Render those as a textarea.
+      def multiline? = list?
       def numeric? = @type == :float || @type == :integer
 
       # How to render this in a form.
