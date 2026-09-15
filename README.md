@@ -812,6 +812,12 @@ Helpers: `sentry_events` and `last_sentry_event` (from Sentry),
 demo routes. It records Sentry events in-process (DummyTransport) unless you
 set `SENTRY_DSN`.
 
+> **Restart the server after editing anything under `lib/`.** The engine's
+> `app/` directory is autoloaded and reloads on every request, but `lib/` is
+> required once at boot. Editing both and reloading the page gives you a new
+> view calling an old class — typically `NoMethodError` for a method you can see
+> in the file in front of you.
+
 ```bash
 cd test/dummy
 bin/rails sentrifig:install && bin/rails db:migrate
